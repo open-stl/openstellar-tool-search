@@ -1,0 +1,48 @@
+{
+  "name": "@openstellar/tool-search",
+  "version": "0.1.0",
+  "description": "Tool search plugin for OpenCode — BM25 and regex search to discover tools on demand, reducing context usage",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && rollup -c rollup.dts.config.mjs && node esbuild.config.mjs && rm -rf dist/src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "tool-search",
+    "bm25",
+    "context-reduction",
+    "deferred-loading"
+  ],
+  "author": "OpenStellar",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OpenStellar/openstellar-tool-search.git"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "esbuild": "^0.28.0",
+    "rollup": "^4.61.1",
+    "rollup-plugin-dts": "^6.4.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.4"
+  }
+}
