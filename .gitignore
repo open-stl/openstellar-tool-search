@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.tsbuildinfo
+*.tgz
 .DS_Store
 .claude/
 .omo/
@@ -8,3 +9,5 @@ dist/
 .env
 *.local.*
 .idea/
+HOMEWORK-RESULT.md
+CLAUDE.md
