@@ -30,9 +30,11 @@ export class ToolVault {
   private scorerStale = true;
   private semantic: SemanticMatcher | undefined;
   private semanticStale = true;
+  private scorerCfg: { k1: number; b: number };
 
   constructor(cfg: Partial<ScoreParams & { embedding?: EmbedConfig }> = {}) {
-    this.scorer = new RankEngine<ToolMeta>(cfg.k1 ?? 0.9, cfg.b ?? 0.4);
+    this.scorerCfg = { k1: cfg.k1 ?? 0.9, b: cfg.b ?? 0.4 };
+    this.scorer = new RankEngine<ToolMeta>(this.scorerCfg.k1, this.scorerCfg.b);
     if (cfg.embedding?.enabled) {
       this.semantic = new SemanticMatcher(cfg.embedding);
     }
@@ -52,7 +54,7 @@ export class ToolVault {
   private buildScorer(): void {
     if (!this.scorerStale) return;
     const items = Array.from(this.store.values());
-    this.scorer = new RankEngine<ToolMeta>(this.scorer['k1'], this.scorer['b']);
+    this.scorer = new RankEngine<ToolMeta>(this.scorerCfg.k1, this.scorerCfg.b);
     this.scorer.feed(items, (e) => {
       const fields = [e.id, e.description];
       if (e.parameters) fields.push(...extractParamTexts(e.parameters));
@@ -63,13 +65,13 @@ export class ToolVault {
 
   private async buildSemantic(): Promise<void> {
     if (!this.semantic || !this.semanticStale) return;
+    this.semanticStale = false;
     const items = Array.from(this.store.values());
     const indexed = items.map((e) => ({
       id: e.id,
       text: [e.id, e.description, ...extractParamTexts(e.parameters)].join(' '),
     }));
     await this.semantic.index(indexed);
-    this.semanticStale = false;
   }
 
   async query(text: string, limit: number): Promise<ToolMeta[]> {

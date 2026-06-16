@@ -282,19 +282,21 @@ describe('E2E: tool.definition hook side-effects', () => {
     expect(out.description).toBe('Real description of tool_search itself');
   });
 
-  it('19. stripDescriptions mutates parameter descriptions to [d] in place (preserves reference)', async () => {
+  it('19. defers top-level description but preserves parameter descriptions in place (reference preserved)', async () => {
     const ctx = makeCtx();
     const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
     const defHook = hooks['tool.definition']!;
     const params = { type: 'object', properties: { x: { type: 'string', description: 'Original X desc' } } };
     const out: any = { description: 'Real', parameters: params };
     await defHook({ toolID: 'other_tool' }, out);
-    expect((out.parameters as any).properties.x.description).toBe('[d]');
+    expect(out.description).toBe('[d]');
+    // Parameter descriptions are preserved (not scrubbed — matches npm behavior)
+    expect((out.parameters as any).properties.x.description).toBe('Original X desc');
     // Reference preserved — this prevents DeepSeek schema error
     expect(out.parameters).toBe(params);
   });
 
-  it('19b. stripDescriptions recurses into NESTED objects (depth > 1) and array items', async () => {
+  it('19b. parameter descriptions are preserved at any depth (no longer scrubbed)', async () => {
     const ctx = makeCtx();
     const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
     const defHook = hooks['tool.definition']!;
@@ -326,10 +328,10 @@ describe('E2E: tool.definition hook side-effects', () => {
     const out: any = { description: 'Real', parameters: params };
     await defHook({ toolID: 'deeply_nested_tool' }, out);
     const p = out.parameters as any;
-    // Top-level nested object path
-    expect(p.properties.outer.properties.inner.properties.leaf.description).toBe('[d]');
-    // Array items path
-    expect(p.properties.items.items.properties.name.description).toBe('[d]');
+    expect(out.description).toBe('[d]');
+    // Parameter descriptions preserved at any depth
+    expect(p.properties.outer.properties.inner.properties.leaf.description).toBe('Deep nested description');
+    expect(p.properties.items.items.properties.name.description).toBe('Item name');
   });
 });
 
@@ -358,7 +360,8 @@ describe('E2E: config options', () => {
     const out: any = { description: 'Real', parameters: { type: 'object', properties: { x: { type: 'string', description: 'X' } } } };
     await defHook({ toolID: 'some_tool' }, out);
     expect(out.description).toBe('[hidden]');
-    expect((out.parameters as any).properties.x.description).toBe('[hidden]');
+    // Parameter descriptions preserved (only top-level desc is scrubbed)
+    expect((out.parameters as any).properties.x.description).toBe('X');
   });
 
   it('22. alwaysLoad exempts specific tools from [d] deferral', async () => {
@@ -373,7 +376,8 @@ describe('E2E: config options', () => {
     const other: any = { description: 'Other desc', parameters: { type: 'object', properties: { y: { type: 'string', description: 'Y desc' } } } };
     await defHook({ toolID: 'other_tool' }, other);
     expect(other.description).toBe('[d]');
-    expect((other.parameters as any).properties.y.description).toBe('[d]');
+    // Parameter descriptions preserved (only top-level desc is scrubbed)
+    expect((other.parameters as any).properties.y.description).toBe('Y desc');
   });
 
   it('23. bm25.k1 and bm25.b config are accepted and produce results', async () => {

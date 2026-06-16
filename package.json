@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Tool search plugin for OpenCode — BM25 and regex search to discover tools on demand, reducing context usage",
   "type": "module",
+  "main": "./dist/index.js",
   "exports": {
     ".": {
       "import": "./dist/index.js",
