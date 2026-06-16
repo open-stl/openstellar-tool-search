@@ -27,7 +27,7 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
   const vault = new ToolVault({
     k1: opts.bm25?.k1,
     b: opts.bm25?.b,
-    embedding: opts.embedding ?? { enabled: false },
+    embedding: opts.embedding ?? { enabled: true },
   });
 
   let deferrals = 0;

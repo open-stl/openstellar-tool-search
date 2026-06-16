@@ -138,32 +138,24 @@ describe('ToolSearchPlugin', () => {
   });
 
   // =========================================================================
-  // RED Test 3 — Bug 6: embedding defaults to enabled
+  // Bug 6: embedding defaults to enabled
   // =========================================================================
   //
   // The current code does:
   //   embedding: opts.embedding ?? { enabled: true }
   //
-  // When no options are passed (opts.embedding is undefined), the fallback
-  // `{ enabled: true }` is used.  The ToolVault then creates a
-  // SemanticMatcher, which tries to load an embedding model at runtime — and
-  // fails because the model is not available.
-  //
-  // The CORRECT default is { enabled: false }.  Embedding should be opt-in.
-  //
-  // This test calls the plugin with NO options and asserts that no
-  // SemanticMatcher is created (the matcherInstantiated flag stays false).
-  // On current code it fails because the default `{ enabled: true }` causes a
-  // SemanticMatcher to be instantiated.
+  // Embedding is enabled by default because BM25 cannot handle multilingual
+  // queries (Thai, Japanese, etc.) — the tokenizer strips non-ASCII chars.
+  // Semantic search via @xenova/transformers allows intent matching across
+  // languages. Disable with { embedding: { enabled: false } } in options.
   // =========================================================================
-  it('defaults to embedding disabled when no options provided (Bug 6 - RED)', async () => {
+  it('defaults to embedding enabled when no options provided', async () => {
     matcherInstantiated = false; // Reset from any prior test
 
     // Call plugin with NO embedding-related options
     await ToolSearchPlugin({} as any, {} as any);
 
-    // CORRECT behaviour: SemanticMatcher should NOT be created.
-    // CURRENT BUG: opts.embedding ?? { enabled: true } enables by default.
-    expect(matcherInstantiated).toBe(false);
+    // SemanticMatcher should be created by default.
+    expect(matcherInstantiated).toBe(true);
   });
 });

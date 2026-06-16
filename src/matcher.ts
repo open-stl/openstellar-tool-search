@@ -73,6 +73,7 @@ export class SemanticMatcher {
 
   async index(entries: IndexedEntry[]): Promise<void> {
     await this.open();
+    if (!this.model) return; // model failed to load — skip semantic, caller falls back to BM25
     this.vectors.clear();
     for (const e of entries) {
       const txt = e.text.toLowerCase().trim();
@@ -81,10 +82,9 @@ export class SemanticMatcher {
         continue;
       }
       try {
-        const out = await this.model!(txt, { pooling: 'mean', normalize: true });
+        const out = await this.model(txt, { pooling: 'mean', normalize: true });
         this.vectors.set(e.id, this.normalize(out.data));
       } catch (err) {
-        console.warn('[tool-search] Embedding index error for entry', e.id, err);
         this.vectors.set(e.id, new Float32Array(this.dims));
       }
     }
