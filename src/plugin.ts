@@ -6,25 +6,6 @@ import type { ToolMeta, ToolSearchConfig } from './types.js';
 const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
 const DEFAULT_DEFER = '[d]';
 
-function stripDescriptions(schema: unknown, label: string): void {
-  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return;
-  const obj = schema as Record<string, unknown>;
-
-  if ('description' in obj && (typeof obj.description !== 'object' || obj.description === null)) {
-    obj.description = label;
-  }
-
-  if (obj.properties && typeof obj.properties === 'object' && !Array.isArray(obj.properties)) {
-    for (const propDef of Object.values(obj.properties as Record<string, unknown>)) {
-      stripDescriptions(propDef, label);
-    }
-  }
-
-  if (obj.items && typeof obj.items === 'object' && !Array.isArray(obj.items)) {
-    stripDescriptions(obj.items, label);
-  }
-}
-
 function toast(
   ctx: PluginInput,
   title: string,
@@ -46,7 +27,7 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
   const vault = new ToolVault({
     k1: opts.bm25?.k1,
     b: opts.bm25?.b,
-    embedding: opts.embedding ?? { enabled: true },
+    embedding: opts.embedding ?? { enabled: false },
   });
 
   let deferrals = 0;
@@ -139,17 +120,10 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
     'tool.definition': async (input, output) => {
       if (SEARCH_IDS.has(input.toolID)) return;
 
-      vault.add(
-        input.toolID,
-        output.description,
-        output.parameters ? JSON.parse(JSON.stringify(output.parameters)) : output.parameters,
-      );
+      vault.add(input.toolID, output.description, output.parameters);
 
       if (!alwaysOn.has(input.toolID)) {
         output.description = deferLabel;
-        if (output.parameters && typeof output.parameters === 'object' && !Array.isArray(output.parameters)) {
-          stripDescriptions(output.parameters, deferLabel);
-        }
       }
     },
 

@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
 import { ToolVault } from '../src/vault.js';
+import { SemanticMatcher } from '../src/matcher.js';
 
 describe('ToolVault', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('stores and retrieves tools', () => {
     const v = new ToolVault();
     v.add('read', 'Read a file', { type: 'object', properties: { path: { type: 'string' } } });
@@ -57,5 +62,24 @@ describe('ToolVault', () => {
     const r = await v.query('file', 5);
     expect(r.length).toBe(1);
     expect(r[0].id).toBe('read');
+  });
+
+  it('does not duplicate semantic indexing on concurrent queries (Bug 3)', async () => {
+    const indexSpy = vi.spyOn(SemanticMatcher.prototype, 'index')
+      .mockImplementation(async () => {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      });
+    vi.spyOn(SemanticMatcher.prototype, 'locate')
+      .mockResolvedValue(new Map([['test', 0.95]]));
+
+    const v = new ToolVault({ embedding: { enabled: true } });
+    v.add('test', 'A test tool', { type: 'object', properties: { foo: { type: 'string' } } });
+
+    await Promise.all([
+      v.query('test', 5),
+      v.query('test', 5),
+    ]);
+
+    expect(indexSpy).toHaveBeenCalledTimes(1);
   });
 });
