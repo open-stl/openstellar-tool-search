@@ -51,7 +51,7 @@ export class SemanticMatcher {
   private async doLoad(): Promise<void> {
     try {
       const mod = await import('@xenova/transformers');
-      const name = this.cfg.model ?? 'Xenova/all-MiniLM-L6-v2';
+      const name = this.cfg.model ?? 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
       this.model = (await mod.pipeline('feature-extraction', name)) as unknown as ModelPipeline;
     } catch (e) {
       this.loadError = e as Error;
