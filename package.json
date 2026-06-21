@@ -34,7 +34,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/OpenStellar/openstellar-tool-search.git"
+    "url": "git+https://github.com/open-stl/openstellar-tool-search.git"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*"

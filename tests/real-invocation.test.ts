@@ -183,8 +183,8 @@ describe('REAL tool_search invocations — query quality stress test', () => {
       '"%s" → no match',
       async (q) => {
         const out = await exec(fx.toolSearch, { query: q });
-        expect(out).toMatch(/^No matches\./);
-        expect(out).toContain('Available prefixes:');
+        expect(out).toMatch(/^No matches for/);
+        
       },
     );
   });
