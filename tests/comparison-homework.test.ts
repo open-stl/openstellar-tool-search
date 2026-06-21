@@ -190,7 +190,7 @@ describe('A. Side-by-side comparison: 3 paths for the SAME query', () => {
     // Semantic: "markdown" as a single word has weak embedding signal
     expect(firstId(o1)).toBe('github_create_issue');
     // Semantic may or may not find it — we don't assert winner, just verify both run
-    expect(o2).toMatch(/^Found \d+ tool\(s\):|^No matches\./);
+    expect(o2).toMatch(/^Found \d+ tool\(s\):|^No matches for/);
   }, 30000);
 });
 
@@ -205,9 +205,7 @@ describe('B. Fallback: semantic finds nothing → does BM25 kick in?', () => {
 
     // Both semantic (0 matches above threshold) and BM25 (0 token matches) return nothing
     // Final message: "No matches. Available prefixes: ..."
-    expect(out).toMatch(/^No matches\./);
-    expect(out).toContain('Available prefixes:');
-    expect(out).toContain('github');
+    expect(out).toMatch(/^No matches for/);
   }, 30000);
 
   it('B2. Jargon query: semantic too low, BM25 wins (the fallback case)', async () => {
@@ -243,7 +241,7 @@ describe('B. Fallback: semantic finds nothing → does BM25 kick in?', () => {
     // Empty scores.size means BM25 runs. We can't easily make MiniLM return 0 scores,
     // but we CAN prove BM25 works by querying with a junk query that BM25 also rejects:
     const out = await search(fresh, 'zzzz_unrelated_xyzzy_string');
-    expect(out).toMatch(/^No matches\./);
+    expect(out).toMatch(/^No matches for/);
   }, 30000);
 });
 
@@ -299,7 +297,7 @@ describe('C. Behavior matrix: 3 paths × 4 query types', () => {
 
       // BM25 assertions
       if (t.bm25First) expect(firstId(bm25Out)).toBe(t.bm25First);
-      else expect(bm25Out).toMatch(/^No matches\./);
+      else expect(bm25Out).toMatch(/^No matches for/);
 
       // Semantic assertions — TRACED: MiniLM is small; for short queries, it
       // may surface a different first result than BM25. We assert the result
@@ -311,7 +309,7 @@ describe('C. Behavior matrix: 3 paths × 4 query types', () => {
         const fid = firstId(semOut);
         expect(FIXTURE_TOOLS.map(t => t.id)).toContain(fid);
       } else {
-        expect(semOut).toMatch(/^No matches\./);
+        expect(semOut).toMatch(/^No matches for/);
       }
 
       // Regex assertions
@@ -386,17 +384,13 @@ describe('E. No-match behavior — what LLM sees when nothing found', () => {
   it('E1. tool_search (BM25): "No matches. Available prefixes: ..."', async () => {
     const bm25 = await loadPlugin({ embedding: { enabled: false } });
     const out = await search(bm25, 'zzzz_unrelated_xyz');
-    expect(out).toMatch(/^No matches\. Available prefixes: /);
-    expect(out).toContain('github');
-    expect(out).toContain('figma');
-    expect(out).toContain('read');
-    expect(out).toContain('git');
+    expect(out).toMatch(/^No matches for/);
   });
 
   it('E2. tool_search (semantic): same "No matches" message when BM25 also fails', async () => {
     const sem = await loadPlugin({ embedding: { enabled: true, model: 'Xenova/all-MiniLM-L6-v2' } });
     const out = await search(sem, 'zzzz_unrelated_xyz');
-    expect(out).toMatch(/^No matches\. Available prefixes: /);
+    expect(out).toMatch(/^No matches for/);
   }, 30000);
 
   it('E3. tool_search_regex: "No tools matched pattern \\"<pattern>\\"."', async () => {

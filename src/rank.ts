@@ -1,6 +1,6 @@
 function breakWords(text: string): string[] {
   if (!text || typeof text !== 'string') return [];
-  const cleaned = text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
+  const cleaned = text.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ');
   const tokens = [];
   for (const t of cleaned.split(/\s+/)) {
     if (t.length > 0) tokens.push(t);

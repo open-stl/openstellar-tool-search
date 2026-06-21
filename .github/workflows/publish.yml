@@ -18,9 +18,10 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
       - run: npm ci --legacy-peer-deps
       - run: npm test
-      - run: npm publish --access public
+      - run: npm publish --access public --provenance
       - run: gh release create ${{ github.ref_name }} --generate-notes
         env:
           GITHUB_TOKEN: ${{ github.token }}
