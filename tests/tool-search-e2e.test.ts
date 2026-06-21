@@ -192,12 +192,9 @@ describe('E2E: tool_search (BM25 path)', () => {
     expect(out).toContain('owner/repo format');
   });
 
-  it('8. No matches → returns prefix suggestion', async () => {
+  it('8. No matches → returns no-match message', async () => {
     const out = await executeSearch(fx.toolSearch, { query: 'xyzzy_unicorn_tool_42' });
-    expect(out).toMatch(/^No matches\./);
-    expect(out).toContain('Available prefixes:');
-    expect(out).toContain('github');
-    expect(out).toContain('figma');
+    expect(out).toMatch(/^No matches for/);
   });
 
   it('9. searchLimit config caps results (re-fires defHook on new instance)', async () => {
@@ -346,9 +343,10 @@ describe('E2E: system.transform hook', () => {
     const sysHook = hooks['experimental.chat.system.transform']!;
     const out: any = { system: [] };
     await sysHook({} as any, out);
-    expect(out.system).toHaveLength(1);
-    expect(out.system[0]).toMatch(/tools loaded.*have "\[d\]"/);
-    expect(out.system[0]).toMatch(/tool_search\(\{ query: "prefix" \}\)/);
+      expect(out.system).toHaveLength(1);
+      expect(out.system[0]).toMatch(/tools loaded.*have.*descriptions/);
+      expect(out.system[0]).toMatch(/"\[d\]"/);
+      expect(out.system[0]).toMatch(/tool_search\(\{ query: /);
   });
 });
 

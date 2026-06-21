@@ -1,5 +1,7 @@
 # OpenStellar Tool Search
 
+> ⚠️ **Required:** This plugin must be used with [`@openstellar/mcp-adapter`](https://github.com/open-stl/openstellar-mcp-adapter) to function.
+
 **Every tool has a name. Only you know what you need to do.**
 
 OpenCode defers tool descriptions to save context — the `[d]` tag is everywhere.
@@ -21,7 +23,7 @@ ranked results, with full descriptions, in one call.
 | **Lazy indexing** | Zero cost on register. BM25 + embeddings built on first search only | Plugin does nothing until you ask. No startup tax. |
 | **Self-contrasting tools** | Each search tool tells the LLM *when to use the other* | No "which one do I call?" paralysis |
 | **Local embeddings** | `@xenova/transformers` runs MiniLM in-process | No API calls. No data leaves the machine. |
-| **Drop-in plugin** | One npm install + one config block | Works with any OpenCode tool registry |
+| **Auto-update** | Checks npm registry on first session, invalidates stale cache, notifies you by toast | Always runs the latest version. No manual cleanup. |
 
 ---
 
@@ -73,13 +75,13 @@ Search returns the richest match — not just the first alphabetical hit.
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `alwaysLoad` | `string[]` | `[]` | Tool IDs to never defer (`tool_search` and `tool_search_regex` are auto-added) |
-| `searchLimit` | `number` | `5` | Max results per search |
+| `searchLimit` | `number` | `10` | Max results per search |
 | `deferDescription` | `string` | `"[d]"` | Placeholder used for deferred descriptions |
 | `bm25.k1` | `number` | `0.9` | Term frequency saturation — higher = more weight on repeated terms |
 | `bm25.b` | `number` | `0.4` | Length normalization — `0` = none, `1` = full |
 | `embedding.enabled` | `boolean` | `true` | Use local semantic search via `@xenova/transformers` |
-| `embedding.model` | `string` | `"Xenova/all-MiniLM-L6-v2"` | Any HuggingFace model the transformers pipeline supports |
-| `embedding.threshold` | `number` | `0.3` | Cosine similarity floor for semantic hits |
+| `embedding.model` | `string` | `"Xenova/paraphrase-multilingual-MiniLM-L12-v2"` | Any HuggingFace model supported by the transformers pipeline |
+| `embedding.threshold` | `number` | `0.5` | Cosine similarity floor for semantic hits |
 
 ---
 
@@ -87,15 +89,14 @@ Search returns the richest match — not just the first alphabetical hit.
 
 ```
 src/
-├── shared/       — Types, JSON Schema utilities, tokenizer
-│                   (extractable to @openstellar/shared)
-├── engine/       — BM25 ranking (pure, zero dependencies)
-├── catalog/      — Tool vault with lazy indexing
-└── plugin/       — OpenCode hooks + tool definitions
+├── plugin.ts       — OpenCode hooks (tool.definition, system.transform, event)
+├── vault.ts        — ToolVault (BM25 + semantic search engine)
+├── matcher.ts      — SemanticMatcher (@xenova/transformers embeddings)
+├── rank.ts         — RankEngine (BM25 tokenizer & scorer)
+├── types.ts        — TypeScript types
+└── hooks/
+    └── auto-update-checker.ts  — npm registry version check + cache invalidation
 ```
-
-Why layered? The `shared/` and `engine/` modules can be extracted to `@openstellar/shared`
-and reused across other OpenStellar packages — no duplication.
 
 ---
 
@@ -103,16 +104,24 @@ and reused across other OpenStellar packages — no duplication.
 
 ```bash
 npm install
-npm test          # 66 tests
+npm test          # 115 tests
 npm run typecheck
 npm run build
 ```
 
-Smoke test the built tarball (proves `npm publish` will work):
+Smoke test the built tarball:
 
 ```bash
 npm run smoke:plugin
 ```
+
+---
+
+## Related Repositories
+
+* [openstellar-mcp-adapter](https://github.com/open-stl/openstellar-mcp-adapter)
+* [opencode-tool-search](https://github.com/M0Rf30/opencode-tool-search)
+* [opencode-mcp-adapter](https://github.com/CloudedQuartz/opencode-mcp-adapter)
 
 ---
 

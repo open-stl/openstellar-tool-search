@@ -2,6 +2,7 @@ import type { Hooks, Plugin, PluginInput, PluginOptions } from '@opencode-ai/plu
 import { tool } from '@opencode-ai/plugin';
 import { ToolVault } from './vault.js';
 import type { ToolMeta, ToolSearchConfig } from './types.js';
+import { checkForUpdate, formatUpdateMessage } from './hooks/auto-update-checker.js';
 
 const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
 const DEFAULT_DEFER = '[d]';
@@ -10,7 +11,7 @@ function toast(
   ctx: PluginInput,
   title: string,
   msg: string,
-  variant: 'info' | 'success' | 'error' = 'info',
+  variant: 'info' | 'success' | 'warning' | 'error' = 'info',
   duration = 3000,
 ): void {
   setTimeout(() => {
@@ -33,6 +34,7 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
   let deferrals = 0;
   let total = 0;
   let alerted = false;
+  let hasCheckedForUpdate = false;
 
   setTimeout(() => {
     toast(ctx, 'Tool Search', 'Active — tools will be deferred on first prompt.', 'info', 4000);
@@ -42,36 +44,28 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
     tool: {
       tool_search: tool({
         description: [
-          'Most tools list abbreviated tags like "[d]" to save space.',
-          'If you see a tag and need to know what it does, or you need a capability',
-          'but cannot recall the exact tool name — run this.',
+          'Search for tools marked "[d]" (deferred — hidden to save context).',
           '',
-          'Uses AI-powered semantic search (local embedding model) to match your',
-          'description against tool names, descriptions, and parameter schemas.',
+          'Maps job descriptions or tool prefixes to full tool names and parameters.',
           '',
-          'Modes:',
-          '  - describe the job:  tool_search({ query: "save code to github" }) → ranked matches',
+          'Examples:',
+          '  tool_search({ query: "github" })       → github_* tools',
+          '  tool_search({ query: "commit code" })   → git commit tools',
+          '  tool_search({ query: "remember" })      → memory/save tools',
           '',
-          'Tips:',
-          '  • Describe the job, not the tool: "find text in files" not "grep"',
-          '  • Full sentences are fine: "upload image to figma"',
-          '  • Works even when you misremember the name',
-          '',
-          'Use tool_search_regex when you know the exact name pattern.',
+          'Uses local AI embedding + keyword search.',
+          'For exact name matching, use tool_search_regex.',
         ].join('\n'),
         args: {
           query: tool.schema
             .string()
-            .describe('What you want to do — natural language, not the tool name. Example: "find files by name" or "commit code".'),
+            .describe('Job description or tool prefix. e.g. "find files" or "github".'),
         },
         async execute(args) {
           const hits = await vault.query(args.query, maxResults);
 
           if (hits.length === 0) {
-            const prefixes = Array.from(new Set(
-              vault.list().map((t) => t.id.includes('_') ? t.id.split('_')[0] : t.id)
-            )).sort().join(', ');
-            return `No matches. Available prefixes: ${prefixes}. Try one as keyword.`;
+            return `No matches for "${args.query}". Try broader terms or tool_search_regex.`;
           }
 
           const lines = hits.map((r) => {
@@ -86,15 +80,14 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
 
       tool_search_regex: tool({
         description: [
-          'Regex-based search against tool IDs and descriptions.',
-          'Use when you know the naming pattern but need to pinpoint.',
+          'Search tools by regex pattern (case-insensitive).',
           '',
           'Examples:',
           '  tool_search_regex({ pattern: "github.*issue" }) → GitHub issue tools',
-          '  tool_search_regex({ pattern: "^figma" })        → all figma-* tools',
-          '  tool_search_regex({ pattern: "file|read" })     → union of file and read tools',
+          '  tool_search_regex({ pattern: "^figma" }) → all figma-* tools',
+          '  tool_search_regex({ pattern: "file|read" }) → file and read tools',
           '',
-          'For fuzzy or intent-based search, use tool_search instead.',
+          'For natural-language search, use tool_search.',
         ].join('\n'),
         args: {
           pattern: tool.schema
@@ -134,14 +127,26 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
 
       if (deferrals > 0) {
         output.system.push(
-          `${total} tools loaded—${deferrals} have "${deferLabel}" descriptions. `
-          + `Expand a "${deferLabel}" tool via tool_search({ query: "prefix" }) before calling it.`
+          `${total} tools loaded — ${deferrals} have "${deferLabel}" descriptions. `
+          + `Call tool_search({ query: "<prefix or description>" }) before using any "${deferLabel}" tool.`
         );
 
         if (!alerted) {
           alerted = true;
           toast(ctx, 'Tool Search', `${deferrals}/${total} tools deferred.`, 'info', 4000);
         }
+      }
+    },
+
+    event: async ({ event }) => {
+      if (event.type !== 'session.created') return;
+      if (hasCheckedForUpdate) return;
+      hasCheckedForUpdate = true;
+
+      const result = await checkForUpdate();
+      if (result.needsUpdate && result.latestVersion) {
+        const msg = formatUpdateMessage(result);
+        toast(ctx, msg.title, msg.message, msg.variant, 6000);
       }
     },
   };
