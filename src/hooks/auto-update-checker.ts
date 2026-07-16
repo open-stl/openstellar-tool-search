@@ -75,14 +75,13 @@ export function invalidatePackageCache(): boolean {
         seen.add(root);
         if (!existsSync(root)) continue;
 
-        const scopeDir = join(root, PACKAGE_SCOPE);
-        if (existsSync(scopeDir)) {
+        const packageDir = join(root, PACKAGE_NAME);
+        if (existsSync(packageDir)) {
             try {
-                rmSync(scopeDir, { recursive: true, force: true });
+                rmSync(packageDir, { recursive: true, force: true });
                 removed = true;
             } catch {
             }
-            continue;
         }
 
         const specDir = join(root, `${PACKAGE_NAME}@latest`);
@@ -95,6 +94,32 @@ export function invalidatePackageCache(): boolean {
         }
     }
     return removed;
+}
+
+export function isNewerVersion(latest: string, current: string): boolean {
+    const parseVersion = (v: string) => {
+        const [main, pre] = v.split('-');
+        const parts = main.split('.').map(x => parseInt(x, 10));
+        return { parts, pre };
+    };
+    
+    const l = parseVersion(latest);
+    const c = parseVersion(current);
+    
+    for (let i = 0; i < 3; i++) {
+        const lPart = l.parts[i] || 0;
+        const cPart = c.parts[i] || 0;
+        if (lPart > cPart) return true;
+        if (lPart < cPart) return false;
+    }
+    
+    // Handle pre-release version differences (clean release is newer than pre-release version)
+    if (l.pre && !c.pre) return false;
+    if (!l.pre && c.pre) return true;
+    if (l.pre && c.pre) {
+        return l.pre.localeCompare(c.pre) > 0;
+    }
+    return false;
 }
 
 export async function checkForUpdate(): Promise<UpdateCheckResult> {
@@ -118,7 +143,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
         };
     }
 
-    if (currentVersion === latestVersion) {
+    if (!isNewerVersion(latestVersion, currentVersion)) {
         return { needsUpdate: false, currentVersion, latestVersion };
     }
 
