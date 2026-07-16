@@ -6,13 +6,14 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const tempDir = await mkdtemp(join(tmpdir(), 'openstellar-tool-search-smoke-'));
+let tarball;
 
 try {
   const { stdout: packStdout } = await execFileAsync('npm', ['pack', '--silent'], {
     cwd: new URL('..', import.meta.url),
   });
 
-  const tarball = packStdout.trim().split('\n').at(-1);
+  tarball = packStdout.trim().split('\n').at(-1);
 
   await execFileAsync('npm', ['init', '-y'], { cwd: tempDir });
   await execFileAsync('npm', ['install', join(process.cwd(), tarball)], {
@@ -24,13 +25,13 @@ try {
     [
       '--input-type=module',
       '-e',
-      "import('@openstellar/tool-search').then(async (mod) => { if (typeof mod.default !== 'function') throw new Error('Default export is not a function'); if (typeof mod.ToolSearchPlugin !== 'function') throw new Error('ToolSearchPlugin export is not a function'); const result = await mod.default({}, { tool: {} }); if (!result || typeof result !== 'object') throw new Error('Plugin did not return an object'); console.log('plugin-smoke-ok'); })",
+      "import('@openstellar/tool-search').then(async (mod) => { if (typeof mod.default !== 'function') throw new Error('Default export is not a function'); if (typeof mod.ToolSearchPlugin !== 'function') throw new Error('ToolSearchPlugin export is not a function'); const ctx = { client: { tui: { showToast: async () => {} } } }; const result = await mod.default(ctx, { tool: {} }); if (!result || typeof result !== 'object') throw new Error('Plugin did not return an object'); console.log('plugin-smoke-ok'); })",
     ],
     { cwd: tempDir },
   );
 
   process.stdout.write(stdout);
-  await rm(new URL(`../${tarball}`, import.meta.url), { force: true });
 } finally {
+  if (tarball) await rm(new URL(`../${tarball}`, import.meta.url), { force: true });
   await rm(tempDir, { recursive: true, force: true });
 }

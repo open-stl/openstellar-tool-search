@@ -3,6 +3,16 @@ import { ToolVault } from '../src/vault.js';
 import { SemanticMatcher } from '../src/matcher.js';
 
 describe('ToolVault', () => {
+  const deferred = <T = void>() => {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -64,22 +74,60 @@ describe('ToolVault', () => {
     expect(r[0].id).toBe('read');
   });
 
-  it('does not duplicate semantic indexing on concurrent queries (Bug 3)', async () => {
-    const indexSpy = vi.spyOn(SemanticMatcher.prototype, 'index')
-      .mockImplementation(async () => {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      });
-    vi.spyOn(SemanticMatcher.prototype, 'locate')
+  it('awaits one deferred semantic build before concurrent locate calls', async () => {
+    const build = deferred();
+    const locate = vi.spyOn(SemanticMatcher.prototype, 'locate')
       .mockResolvedValue(new Map([['test', 0.95]]));
-
+    const index = vi.spyOn(SemanticMatcher.prototype, 'index')
+      .mockReturnValue(build.promise);
     const v = new ToolVault({ embedding: { enabled: true } });
-    v.add('test', 'A test tool', { type: 'object', properties: { foo: { type: 'string' } } });
+    v.add('test', 'A test tool', {});
 
-    await Promise.all([
-      v.query('test', 5),
-      v.query('test', 5),
-    ]);
+    const first = v.query('test', 5);
+    const second = v.query('test', 5);
+    await Promise.resolve();
+    expect(index).toHaveBeenCalledTimes(1);
+    expect(locate).not.toHaveBeenCalled();
+    expect(await Promise.race([first.then(() => 'settled'), Promise.resolve('pending')])).toBe('pending');
+    expect(await Promise.race([second.then(() => 'settled'), Promise.resolve('pending')])).toBe('pending');
 
-    expect(indexSpy).toHaveBeenCalledTimes(1);
+    build.resolve();
+    await Promise.all([first, second]);
+    expect(locate).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps semantic state stale when a tool is added during a build', async () => {
+    const firstBuild = deferred();
+    const index = vi.spyOn(SemanticMatcher.prototype, 'index')
+      .mockReturnValueOnce(firstBuild.promise)
+      .mockResolvedValue(undefined);
+    vi.spyOn(SemanticMatcher.prototype, 'locate').mockResolvedValue(new Map());
+    const v = new ToolVault({ embedding: { enabled: true } });
+    v.add('first', 'First tool', {});
+
+    const query = v.query('first', 5);
+    await Promise.resolve();
+    v.add('second', 'Second tool', {});
+    firstBuild.resolve();
+    await query;
+    await v.query('second', 5);
+    expect(index).toHaveBeenCalledTimes(2);
+    expect(index.mock.calls[1][0].map((entry) => entry.id)).toEqual(['first', 'second']);
+  });
+
+  it('falls back to BM25 on index failure and retries later', async () => {
+    const failure = deferred();
+    const index = vi.spyOn(SemanticMatcher.prototype, 'index')
+      .mockReturnValueOnce(failure.promise)
+      .mockResolvedValue(undefined);
+    vi.spyOn(SemanticMatcher.prototype, 'locate').mockResolvedValue(new Map());
+    const v = new ToolVault({ embedding: { enabled: true } });
+    v.add('read', 'Read a file', {});
+
+    const first = v.query('file', 5);
+    failure.reject(new Error('controlled failure'));
+    await expect(first).resolves.toEqual([expect.objectContaining({ id: 'read' })]);
+    await v.query('file', 5);
+    expect(index).toHaveBeenCalledTimes(2);
   });
 });

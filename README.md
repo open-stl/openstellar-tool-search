@@ -81,7 +81,7 @@ Search returns the richest match — not just the first alphabetical hit.
 | `bm25.b` | `number` | `0.4` | Length normalization — `0` = none, `1` = full |
 | `embedding.enabled` | `boolean` | `true` | Use local semantic search via `@xenova/transformers` |
 | `embedding.model` | `string` | `"Xenova/paraphrase-multilingual-MiniLM-L12-v2"` | Any HuggingFace model supported by the transformers pipeline |
-| `embedding.threshold` | `number` | `0.5` | Cosine similarity floor for semantic hits |
+| `embedding.threshold` | `number` | `0.3` | Base cosine similarity threshold for semantic hits; relaxed to 70% of this value when fewer than two hits qualify |
 
 ---
 
