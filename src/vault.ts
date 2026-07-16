@@ -30,6 +30,8 @@ export class ToolVault {
   private scorerStale = true;
   private semantic: SemanticMatcher | undefined;
   private semanticStale = true;
+  private semanticGeneration = 0;
+  private semanticBuildPromise: Promise<void> | undefined;
   private scorerCfg: { k1: number; b: number };
 
   constructor(cfg: Partial<ScoreParams & { embedding?: EmbedConfig }> = {}) {
@@ -48,6 +50,7 @@ export class ToolVault {
       this.store.set(id, { id, description: safe, parameters });
       this.scorerStale = true;
       this.semanticStale = true;
+      this.semanticGeneration += 1;
     }
   }
 
@@ -63,21 +66,31 @@ export class ToolVault {
     this.scorerStale = false;
   }
 
-  private async buildSemantic(): Promise<void> {
-    if (!this.semantic || !this.semanticStale) return;
-    this.semanticStale = false;
+  private buildSemantic(): Promise<void> {
+    if (!this.semantic || !this.semanticStale) return Promise.resolve();
+    if (this.semanticBuildPromise) return this.semanticBuildPromise;
+
+    const generation = this.semanticGeneration;
     const items = Array.from(this.store.values());
     const indexed = items.map((e) => ({
       id: e.id,
       text: [e.id, e.description, ...extractParamTexts(e.parameters)].join(' '),
     }));
-    await this.semantic.index(indexed);
+    let build: Promise<void>;
+    build = this.semantic.index(indexed).then(() => {
+      if (this.semanticGeneration === generation) this.semanticStale = false;
+    }).finally(() => {
+      if (this.semanticBuildPromise === build) this.semanticBuildPromise = undefined;
+    });
+    this.semanticBuildPromise = build;
+    return build;
   }
 
   async query(text: string, limit: number): Promise<ToolMeta[]> {
     if (this.semantic) {
       try {
         await this.buildSemantic();
+        if (this.semanticStale) await this.buildSemantic();
         const scores = await this.semantic.locate(text);
         if (scores.size > 0) {
           return Array.from(scores.entries())

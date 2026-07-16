@@ -344,9 +344,10 @@ describe('E2E: system.transform hook', () => {
     const out: any = { system: [] };
     await sysHook({} as any, out);
       expect(out.system).toHaveLength(1);
-      expect(out.system[0]).toMatch(/tools loaded.*have.*descriptions/);
+      expect(out.system[0]).toMatch(/tools.*are deferred/);
       expect(out.system[0]).toMatch(/"\[d\]"/);
       expect(out.system[0]).toMatch(/tool_search\(\{ query: /);
+      expect(out.system[0]).toMatch(/tool_search_regex\(\{ pattern: /);
   });
 });
 

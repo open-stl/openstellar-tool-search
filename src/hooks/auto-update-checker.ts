@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { readFileSync, existsSync, rmSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { env } from 'node:process';
+import { gt, valid } from 'semver';
 
 const PACKAGE_SCOPE = '@openstellar';
 const PACKAGE_NAME = '@openstellar/tool-search';
@@ -97,33 +98,25 @@ export function invalidatePackageCache(): boolean {
 }
 
 export function isNewerVersion(latest: string, current: string): boolean {
-    const parseVersion = (v: string) => {
-        const [main, pre] = v.split('-');
-        const parts = main.split('.').map(x => parseInt(x, 10));
-        return { parts, pre };
-    };
-    
-    const l = parseVersion(latest);
-    const c = parseVersion(current);
-    
-    for (let i = 0; i < 3; i++) {
-        const lPart = l.parts[i] || 0;
-        const cPart = c.parts[i] || 0;
-        if (lPart > cPart) return true;
-        if (lPart < cPart) return false;
-    }
-    
-    // Handle pre-release version differences (clean release is newer than pre-release version)
-    if (l.pre && !c.pre) return false;
-    if (!l.pre && c.pre) return true;
-    if (l.pre && c.pre) {
-        return l.pre.localeCompare(c.pre) > 0;
-    }
-    return false;
+    return valid(latest) !== null && valid(current) !== null && gt(latest, current);
 }
 
-export async function checkForUpdate(): Promise<UpdateCheckResult> {
-    const currentVersion = getCurrentVersion();
+interface UpdateCheckEffects {
+    getCurrentVersion: () => string | null;
+    getLatestVersion: () => Promise<string | null>;
+    invalidatePackageCache: () => boolean;
+}
+
+const defaultUpdateCheckEffects: UpdateCheckEffects = {
+    getCurrentVersion,
+    getLatestVersion,
+    invalidatePackageCache,
+};
+
+export async function checkForUpdate(
+    effects: UpdateCheckEffects = defaultUpdateCheckEffects,
+): Promise<UpdateCheckResult> {
+    const currentVersion = effects.getCurrentVersion();
     if (!currentVersion) {
         return {
             needsUpdate: false,
@@ -133,7 +126,12 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
         };
     }
 
-    const latestVersion = await getLatestVersion();
+    let latestVersion: string | null;
+    try {
+        latestVersion = await effects.getLatestVersion();
+    } catch {
+        latestVersion = null;
+    }
     if (!latestVersion) {
         return {
             needsUpdate: false,
@@ -147,7 +145,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
         return { needsUpdate: false, currentVersion, latestVersion };
     }
 
-    invalidatePackageCache();
+    effects.invalidatePackageCache();
     return { needsUpdate: true, currentVersion, latestVersion };
 }
 

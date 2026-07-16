@@ -69,23 +69,11 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
   return {
     tool: {
       tool_search: tool({
-        description: [
-          'Search for tools marked "[d]" (deferred — hidden to save context).',
-          '',
-          'Maps job descriptions or tool prefixes to full tool names and parameters.',
-          '',
-          'Examples:',
-          '  tool_search({ query: "github" })       → github_* tools',
-          '  tool_search({ query: "commit code" })   → git commit tools',
-          '  tool_search({ query: "remember" })      → memory/save tools',
-          '',
-          'Uses local AI embedding + keyword search.',
-          'For exact name matching, use tool_search_regex.',
-        ].join('\n'),
+        description: `Find deferred tools marked "${deferLabel}" by task, name, or prefix. Returns full tool IDs and parameter schemas.\nCall tool_search({ query: "<task or name>" }). For regex, use tool_search_regex({ pattern: "<regex>" }).`,
         args: {
           query: tool.schema
             .string()
-            .describe('Job description or tool prefix. e.g. "find files" or "github".'),
+            .describe('Task, tool name, or prefix.'),
         },
         async execute(args) {
           const hits = await vault.query(args.query, maxResults);
@@ -105,20 +93,11 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
       }),
 
       tool_search_regex: tool({
-        description: [
-          'Search tools by regex pattern (case-insensitive).',
-          '',
-          'Examples:',
-          '  tool_search_regex({ pattern: "github.*issue" }) → GitHub issue tools',
-          '  tool_search_regex({ pattern: "^figma" }) → all figma-* tools',
-          '  tool_search_regex({ pattern: "file|read" }) → file and read tools',
-          '',
-          'For natural-language search, use tool_search.',
-        ].join('\n'),
+        description: `Find tools by case-insensitive regex over IDs and descriptions. Returns full tool IDs and parameter schemas.\nCall tool_search_regex({ pattern: "<regex>" }). For task or name search, use tool_search({ query: "<task or name>" }).`,
         args: {
           pattern: tool.schema
             .string()
-            .describe('Case-insensitive regex pattern to match tool IDs and descriptions'),
+            .describe('Case-insensitive regex for tool IDs and descriptions.'),
         },
         async execute(args) {
           const hits = vault.grep(args.pattern, maxResults);
@@ -154,8 +133,8 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
 
       if (deferrals > 0) {
         output.system.push(
-          `${total} tools loaded — ${deferrals} have "${deferLabel}" descriptions. `
-          + `Call tool_search({ query: "<prefix or description>" }) before using any "${deferLabel}" tool.`
+          `${deferrals}/${total} tools are deferred ("${deferLabel}"). `
+          + `Before calling one, retrieve it with tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "<regex>" }).`
         );
 
         if (!alerted) {
