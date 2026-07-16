@@ -40,6 +40,7 @@
     "@opencode-ai/plugin": "*"
   },
   "devDependencies": {
+    "@opencode-ai/plugin": "*",
     "@types/node": "^25.6.0",
     "@types/semver": "^7.7.1",
     "esbuild": "^0.28.0",
