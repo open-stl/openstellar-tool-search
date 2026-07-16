@@ -4,10 +4,10 @@ import { readFileSync, existsSync, rmSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { env } from 'node:process';
 import { gt, valid } from 'semver';
+import { resolveRegistryUrl, buildDistTagsUrl } from './npm-registry.js';
 
 const PACKAGE_SCOPE = '@openstellar';
 const PACKAGE_NAME = '@openstellar/tool-search';
-const NPM_REGISTRY_URL = `https://registry.npmjs.org/-/package/${PACKAGE_NAME}/dist-tags`;
 const NPM_FETCH_TIMEOUT = 5000;
 
 export type UpdateCheckOutcome = 'up-to-date' | 'update-staged' | 'invalidation-failed' | 'check-failed';
@@ -38,12 +38,20 @@ export function getCurrentVersion(): string | null {
     return null;
 }
 
+async function defaultGetLatestVersionUrl(): Promise<string> {
+    const { url } = await resolveRegistryUrl();
+    return buildDistTagsUrl(url, PACKAGE_NAME)!;
+}
+
 export async function getLatestVersion(): Promise<string | null> {
+    const distTagsUrl = await defaultGetLatestVersionUrl();
+    if (!distTagsUrl) return null;
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), NPM_FETCH_TIMEOUT);
 
     try {
-        const response = await fetch(NPM_REGISTRY_URL, {
+        const response = await fetch(distTagsUrl, {
             signal: controller.signal,
             headers: { Accept: 'application/json' },
         });
@@ -116,12 +124,14 @@ export function isNewerVersion(latest: string, current: string): boolean {
 
 export interface UpdateCheckEffects {
     getCurrentVersion: () => string | null;
+    getLatestVersionUrl?: () => Promise<string>;
     getLatestVersion: () => Promise<string | null>;
     invalidatePackageCache: () => boolean;
 }
 
 const defaultUpdateCheckEffects: UpdateCheckEffects = {
     getCurrentVersion,
+    getLatestVersionUrl: defaultGetLatestVersionUrl,
     getLatestVersion,
     invalidatePackageCache,
 };
@@ -141,7 +151,31 @@ export async function checkForUpdate(
 
     let latestVersion: string | null;
     try {
-        latestVersion = await effects.getLatestVersion();
+        if (effects.getLatestVersionUrl) {
+            const distTagsUrl = await effects.getLatestVersionUrl();
+            if (distTagsUrl) {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), NPM_FETCH_TIMEOUT);
+                try {
+                    const response = await fetch(distTagsUrl, {
+                        signal: controller.signal,
+                        headers: { Accept: 'application/json' },
+                    });
+                    if (response.ok) {
+                        const data = (await response.json()) as Record<string, string>;
+                        latestVersion = data.latest ?? null;
+                    } else {
+                        latestVersion = null;
+                    }
+                } finally {
+                    clearTimeout(timeoutId);
+                }
+            } else {
+                latestVersion = null;
+            }
+        } else {
+            latestVersion = await effects.getLatestVersion();
+        }
     } catch {
         latestVersion = null;
     }
