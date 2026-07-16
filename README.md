@@ -19,7 +19,7 @@ ranked results, with full descriptions, in one call.
 | --- | --- | --- |
 | **Semantic + BM25 search** | Match the job against tool names, descriptions, and every nested parameter (`filters.status`, `items[].id`) | The LLM finds tools by capability, not by guessing names |
 | **Regex precision** | `^github.*create`, `mcp\|context`, `^read$` — when you know the shape | Fast pinpoint lookup, no false positives |
-| **Deferred descriptions** | Keeps OpenCode's `[d]` token savings intact | Full descriptions load **only** when searched. Best of both worlds. |
+| **Deferred descriptions** | Keeps the first sentence of the original description followed by the configured suffix (e.g. `[d]`) | Saves prompt context tokens while leaving enough "information scent" for the LLM to locate tools on demand |
 | **Lazy indexing** | Zero cost on register. BM25 + embeddings built on first search only | Plugin does nothing until you ask. No startup tax. |
 | **Self-contrasting tools** | Each search tool tells the LLM *when to use the other* | No "which one do I call?" paralysis |
 | **Local embeddings** | `@xenova/transformers` runs MiniLM in-process | No API calls. No data leaves the machine. |
@@ -104,7 +104,7 @@ src/
 
 ```bash
 npm install
-npm test          # 115 tests
+npm test          # 140 tests
 npm run typecheck
 npm run build
 ```
