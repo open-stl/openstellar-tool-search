@@ -7,6 +7,32 @@ import { checkForUpdate, formatUpdateMessage } from './hooks/auto-update-checker
 const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
 const DEFAULT_DEFER = '[d]';
 
+function getFirstSentence(desc: string): string {
+  if (!desc) return '';
+  const firstNewline = desc.indexOf('\n');
+  const firstLine = firstNewline !== -1 ? desc.slice(0, firstNewline).trim() : desc.trim();
+
+  const abbreviations = new Set(['eg', 'ie', 'dr', 'mr', 'ms', 'mrs', 'vs', 'etc']);
+  const sentenceBoundaryRegex = /\.(?:\s|$)/g;
+  let match;
+  while ((match = sentenceBoundaryRegex.exec(firstLine)) !== null) {
+    const index = match.index;
+    const beforeSegment = firstLine.slice(0, index);
+    
+    // Find the word right before the period
+    const wordMatch = beforeSegment.match(/\b[a-zA-Z.]+$/);
+    if (wordMatch) {
+      const cleanWord = wordMatch[0].toLowerCase().replace(/\./g, '');
+      // If it's a known abbreviation or a single letter (like search middle initials)
+      if (abbreviations.has(cleanWord) || cleanWord.length === 1) {
+        continue;
+      }
+    }
+    return firstLine.slice(0, index + 1).trim();
+  }
+  return firstLine;
+}
+
 function toast(
   ctx: PluginInput,
   title: string,
@@ -116,7 +142,8 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
       vault.add(input.toolID, output.description, output.parameters);
 
       if (!alwaysOn.has(input.toolID)) {
-        output.description = deferLabel;
+        const firstSentence = getFirstSentence(output.description);
+        output.description = firstSentence ? `${firstSentence} ${deferLabel}` : deferLabel;
       }
     },
 
