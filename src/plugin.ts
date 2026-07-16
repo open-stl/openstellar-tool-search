@@ -60,7 +60,8 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
   let deferrals = 0;
   let total = 0;
   let alerted = false;
-  let hasCheckedForUpdate = false;
+  let updateCheckInFlight: Promise<void> | null = null;
+  let updateStaged = false;
 
   setTimeout(() => {
     toast(ctx, 'Tool Search', 'Active — tools will be deferred on first prompt.', 'info', 4000);
@@ -145,15 +146,26 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
     },
 
     event: async ({ event }) => {
-      if (event.type !== 'session.created') return;
-      if (hasCheckedForUpdate) return;
-      hasCheckedForUpdate = true;
-
-      const result = await checkForUpdate();
-      if (result.needsUpdate && result.latestVersion) {
-        const msg = formatUpdateMessage(result);
-        toast(ctx, msg.title, msg.message, msg.variant, 6000);
+      if (event.type !== 'session.created' || updateStaged) return;
+      if (!updateCheckInFlight) {
+        updateCheckInFlight = (async () => {
+          try {
+            const result = await checkForUpdate();
+            const msg = formatUpdateMessage(result);
+            if (result.outcome === 'update-staged') {
+              updateStaged = true;
+              toast(ctx, msg.title, msg.message, msg.variant, 6000);
+            } else if (result.outcome !== 'up-to-date') {
+              toast(ctx, msg.title, msg.message, msg.variant, 6000);
+            }
+          } catch (error) {
+            toast(ctx, 'Tool Search Update Check', error instanceof Error ? error.message : 'Update check failed.', 'error', 6000);
+          } finally {
+            updateCheckInFlight = null;
+          }
+        })();
       }
+      await updateCheckInFlight;
     },
   };
 };

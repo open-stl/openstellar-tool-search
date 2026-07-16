@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { invalidatePackageCache } from '../src/hooks/auto-update-checker.js';
 import {
     checkForUpdate,
+    getPackageCacheTargets,
     isNewerVersion,
 } from '../src/hooks/auto-update-checker.js';
 
@@ -21,6 +23,15 @@ describe('auto-update-checker : isNewerVersion', () => {
         ['1.0.0', 'not-semver', false],
     ])('compares latest %s against current %s as %s', (latest, current, expected) => {
         expect(isNewerVersion(latest, current)).toBe(expected);
+    });
+});
+
+describe('auto-update-checker : cache targets', () => {
+    it('builds only wrapper targets for the package and latest spec', () => {
+        expect(getPackageCacheTargets('/tmp/packages')).toEqual([
+            '/tmp/packages/@openstellar/tool-search',
+            '/tmp/packages/@openstellar/tool-search@latest',
+        ]);
     });
 });
 
@@ -45,6 +56,68 @@ describe('auto-update-checker : checkForUpdate lifecycle', () => {
         return { result, invalidations };
     };
 
+    it('returns false for nonexistent, mixed, and failed filesystem targets', () => {
+        expect(invalidatePackageCache(['/cache'], { existsSync: () => false, rmSync: vi.fn() })).toBe(false);
+        expect(invalidatePackageCache(['/cache'], { existsSync: () => true, rmSync: () => { throw new Error('remove failed'); } })).toBe(false);
+        let calls = 0;
+        expect(invalidatePackageCache(['/cache', '/cache-2'], { existsSync: () => true, rmSync: () => { calls += 1; if (calls === 2) throw new Error('remove failed'); } })).toBe(false);
+    });
+
+    it('returns check-failed when getCurrentVersion throws', async () => {
+        await expect(checkForUpdate({
+            getCurrentVersion: () => { throw new Error('version read failed'); },
+            getLatestVersion: async () => '1.0.1',
+            invalidatePackageCache: () => true,
+        })).resolves.toEqual({
+            outcome: 'check-failed',
+            currentVersion: null,
+            latestVersion: null,
+            error: 'version read failed',
+        });
+    });
+
+    it('returns invalidation-failed when invalidatePackageCache throws', async () => {
+        await expect(checkForUpdate({
+            getCurrentVersion: () => '1.0.0',
+            getLatestVersion: async () => '1.0.1',
+            invalidatePackageCache: () => { throw new Error('remove exploded'); },
+        })).resolves.toEqual({
+            outcome: 'invalidation-failed',
+            currentVersion: '1.0.0',
+            latestVersion: '1.0.1',
+            error: 'remove exploded',
+        });
+    });
+
+    it.each([
+        ['malformed current version', 'latest', '1.0.1'],
+        ['malformed latest version', '1.0.0', 'latest'],
+    ])('returns check-failed for %s', async (_label, currentVersion, latestVersion) => {
+        await expect(checkForUpdate({
+            getCurrentVersion: () => currentVersion,
+            getLatestVersion: async () => latestVersion,
+            invalidatePackageCache: () => true,
+        })).resolves.toEqual({
+            outcome: 'check-failed',
+            currentVersion,
+            latestVersion,
+            error: 'Could not compare package versions',
+        });
+    });
+
+    it('reports invalidation failure without staging an update', async () => {
+        const result = await checkForUpdate({
+            getCurrentVersion: () => '1.0.0',
+            getLatestVersion: async () => '1.0.1',
+            invalidatePackageCache: () => false,
+        });
+
+        expect(result).toMatchObject({
+            outcome: 'invalidation-failed',
+            error: 'Could not invalidate the package cache',
+        });
+    });
+
     it.each([
         ['newer remote version', '1.0.0', '1.0.1', false, true],
         ['equal remote version', '1.0.0', '1.0.0', false, false],
@@ -56,7 +129,7 @@ describe('auto-update-checker : checkForUpdate lifecycle', () => {
         ['missing current version', null, '1.0.1', false, false],
     ])('invalidates only for %s', async (_caseName, current, latest, fetchError, needsUpdate) => {
         const { result, invalidations } = await runCheck(current, latest, fetchError);
-        expect(result.needsUpdate).toBe(needsUpdate);
+        expect(result.outcome).toBe(needsUpdate ? 'update-staged' : (result.error ? 'check-failed' : 'up-to-date'));
         expect(invalidations).toBe(needsUpdate ? 1 : 0);
     });
 });
