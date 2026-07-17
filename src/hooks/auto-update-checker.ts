@@ -6,7 +6,6 @@ import { env } from 'node:process';
 import { gt, valid } from 'semver';
 import { resolveRegistryUrl, buildDistTagsUrl } from './npm-registry.js';
 
-const PACKAGE_SCOPE = '@openstellar';
 const PACKAGE_NAME = '@openstellar/tool-search';
 const NPM_FETCH_TIMEOUT = 5000;
 
