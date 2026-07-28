@@ -1,0 +1,245 @@
+import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
+import { homedir, platform } from 'node:os';
+import { join, dirname } from 'node:path';
+import { env } from 'node:process';
+
+export interface CanonicalToolAuthorization {
+  kind: 'canonical-tool';
+  version: 1;
+  canonicalId: string;
+}
+
+export type PersistedToolAuthorization = string | CanonicalToolAuthorization;
+
+export interface PersistedSession {
+  tools: PersistedToolAuthorization[];
+  lastSeen?: number;
+}
+
+export type PersistedAuthMap = Record<string, PersistedSession>;
+
+export interface AuthPersistenceOptions {
+  filePath?: string;
+  debounceMs?: number;
+}
+
+export function getDefaultAuthStoragePath(): string {
+  if (platform() === 'win32' && env.APPDATA) {
+    return join(env.APPDATA, 'opencode', 'tool-search', 'authorizations.json');
+  }
+  const baseDir = env.XDG_CACHE_HOME || join(homedir(), '.cache');
+  return join(baseDir, 'opencode', 'tool-search', 'authorizations.json');
+}
+
+export class AuthPersistence {
+  private filePath: string;
+  private debounceMs: number;
+  private timer: NodeJS.Timeout | null = null;
+  private pendingState: { authorizations: Map<string, Set<PersistedToolAuthorization>>; lastSeen?: Map<string, number> } | null = null;
+  private writePromise: Promise<void> | null = null;
+  private knownSessions = new Set<string>();
+  private deletedSessions = new Set<string>();
+
+  constructor(options: AuthPersistenceOptions = {}) {
+    this.filePath = options.filePath ?? getDefaultAuthStoragePath();
+    this.debounceMs = options.debounceMs ?? 50;
+  }
+
+  public getFilePath(): string {
+    return this.filePath;
+  }
+
+  public load(): { authorizations: Map<string, Set<PersistedToolAuthorization>>; lastSeen: Map<string, number> } {
+    const authorizations = new Map<string, Set<PersistedToolAuthorization>>();
+    const lastSeen = new Map<string, number>();
+
+    if (!existsSync(this.filePath)) {
+      return { authorizations, lastSeen };
+    }
+
+    try {
+      const content = readFileSync(this.filePath, 'utf-8');
+      if (!content.trim()) {
+        return { authorizations, lastSeen };
+      }
+      const data = JSON.parse(content) as PersistedAuthMap;
+      if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+        console.warn(`[Tool Search] Warning: Invalid persistence format in ${this.filePath}`);
+        return { authorizations, lastSeen };
+      }
+
+      for (const [sessionID, entry] of Object.entries(data)) {
+        if (
+          !entry ||
+          typeof entry !== 'object' ||
+          !Array.isArray(entry.tools)
+        ) {
+          continue;
+        }
+
+        const validTools = entry.tools.filter((t): t is string => typeof t === 'string');
+        const structuredTools = entry.tools.filter((t): t is CanonicalToolAuthorization => {
+          if (!t || typeof t !== 'object' || Array.isArray(t)) return false;
+          const candidate = t as unknown as Record<string, unknown>;
+          return Object.keys(candidate).length === 3
+            && candidate.kind === 'canonical-tool'
+            && candidate.version === 1
+            && typeof candidate.canonicalId === 'string'
+            && candidate.canonicalId.length > 0;
+        });
+        authorizations.set(sessionID, new Set<PersistedToolAuthorization>([
+          ...validTools,
+          ...structuredTools,
+        ]));
+        if (typeof entry.lastSeen === 'number') {
+          lastSeen.set(sessionID, entry.lastSeen);
+        }
+        this.knownSessions.add(sessionID);
+      }
+    } catch (err) {
+      console.warn(`[Tool Search] Warning: Failed to load authorization state from ${this.filePath}:`, err);
+    }
+
+    return { authorizations, lastSeen };
+  }
+
+  public deleteSession(sessionID: string): void {
+    this.knownSessions.add(sessionID);
+    this.deletedSessions.add(sessionID);
+  }
+
+  public save(
+    authorizations: Map<string, Set<PersistedToolAuthorization>>,
+    lastSeen?: Map<string, number>,
+  ): void {
+    // Track sessions deleted by this process instance
+    for (const sessionID of this.knownSessions) {
+      const tools = authorizations.get(sessionID);
+      if (!tools || tools.size === 0) {
+        this.deletedSessions.add(sessionID);
+      }
+    }
+
+    // Track active sessions in this process instance
+    for (const [sessionID, tools] of authorizations.entries()) {
+      if (tools.size > 0) {
+        this.knownSessions.add(sessionID);
+        this.deletedSessions.delete(sessionID);
+      }
+    }
+
+    this.pendingState = {
+      authorizations: new Map(Array.from(authorizations.entries()).map(([k, v]) => [k, new Set(v)])),
+      lastSeen: lastSeen ? new Map(lastSeen) : undefined,
+    };
+
+    if (this.timer) {
+      clearTimeout(this.timer);
+    }
+
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.flush().catch(() => {});
+    }, this.debounceMs);
+  }
+
+  public async flush(): Promise<void> {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+
+    if (!this.pendingState) {
+      if (this.writePromise) {
+        await this.writePromise;
+      }
+      return;
+    }
+
+    const stateToWrite = this.pendingState;
+    this.pendingState = null;
+
+    const doWrite = async () => {
+      try {
+        let mergedPayload: PersistedAuthMap = {};
+        if (existsSync(this.filePath)) {
+          try {
+            const content = readFileSync(this.filePath, 'utf-8');
+            if (content.trim()) {
+              const data = JSON.parse(content) as PersistedAuthMap;
+              if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+                mergedPayload = data;
+              }
+            }
+          } catch {
+            mergedPayload = {};
+          }
+        }
+
+        // Apply explicit deletions from this process instance
+        for (const sessionID of this.deletedSessions) {
+          delete mergedPayload[sessionID];
+          this.knownSessions.delete(sessionID);
+        }
+        this.deletedSessions.clear();
+
+        // Overlay/overwrite with this process instance's in-memory entries
+        for (const [sessionID, toolsSet] of stateToWrite.authorizations.entries()) {
+          const tools: PersistedToolAuthorization[] = Array.from(toolsSet).map((value) => value);
+          if (tools.length > 0) {
+            const ls = stateToWrite.lastSeen?.get(sessionID) ?? mergedPayload[sessionID]?.lastSeen ?? Date.now();
+            mergedPayload[sessionID] = { tools, lastSeen: ls };
+          } else {
+            delete mergedPayload[sessionID];
+          }
+        }
+
+        // Validate persisted structure without expiring entries by elapsed time.
+        for (const [sessionID, entry] of Object.entries(mergedPayload)) {
+          if (
+            !entry ||
+            typeof entry !== 'object' ||
+            !Array.isArray(entry.tools)
+          ) {
+            delete mergedPayload[sessionID];
+          }
+        }
+
+        const dir = dirname(this.filePath);
+        if (!existsSync(dir)) {
+          mkdirSync(dir, { recursive: true });
+        }
+
+        const content = JSON.stringify(mergedPayload, null, 2);
+        const tmpPath = `${this.filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+
+        writeFileSync(tmpPath, content, 'utf-8');
+        try {
+          renameSync(tmpPath, this.filePath);
+        } catch {
+          // Fallback if atomic rename across mounts or windows locks fails
+          writeFileSync(this.filePath, content, 'utf-8');
+          try {
+            if (existsSync(tmpPath)) unlinkSync(tmpPath);
+          } catch {}
+        }
+      } catch (err) {
+        console.warn(`[Tool Search] Warning: Failed to write authorization state to ${this.filePath}:`, err);
+      }
+    };
+
+    const currentWrite = (this.writePromise ?? Promise.resolve()).then(doWrite);
+    this.writePromise = currentWrite;
+    try {
+      await currentWrite;
+    } finally {
+      if (this.writePromise === currentWrite && !this.pendingState) {
+        this.writePromise = null;
+      }
+    }
+
+    if (this.pendingState) {
+      await this.flush();
+    }
+  }
+}
