@@ -85,8 +85,7 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
 
   const formatHit = (r: ToolMeta) => {
     const paramsInfo = r.parameters && typeof r.parameters === 'object' && Object.keys(r.parameters).length > 0 ? `\n  parameters: ${JSON.stringify(r.parameters)}` : '';
-    const aliasInfo = r.aliases && r.aliases.length > 0 ? ` (alias: ${r.aliases.join(', ')})` : '';
-    return `${r.id}: ${r.description}${aliasInfo}${paramsInfo}`;
+    return `${r.id}: ${r.description}${paramsInfo}`;
   };
 
   setTimeout(() => toast(ctx, 'Tool Search', 'Active — tools will be deferred on first prompt.', 'info', 4000), 3000);
@@ -139,7 +138,7 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
       if (!deferredTools.has(input.tool) && !deferredTools.has(canonical)) return;
       const authorized = input.sessionID ? authorizations.get(input.sessionID) : undefined;
       const allowed = authorized && Array.from(authorized).some((value) => authorizationId(value) === canonical)
-        && (input.tool === canonical || Boolean(meta?.aliases?.includes(input.tool)));
+        && input.tool === canonical;
       if (!allowed) {
         output.output = `${String(output.output ?? '')}\n\n[Tool Search Reminder] "${input.tool}" executed without prior search. Run tool_search_regex({ pattern: "^${input.tool}$" }) now to inspect its full description and verify the call was correct. Do not blindly repeat the call; take corrective or follow-up action only if the full description shows it is necessary.`;
       }
@@ -149,7 +148,7 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
       deferrals = deferredTools.size;
 
       if (deferrals > 0) {
-        output.system.push(`${deferrals}/${total} tools are deferred ("${deferLabel}"). Before calling one, retrieve it with tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "<regex>" }). Deferred tools require a successful search before execution. Search results identify the canonical tool ID; valid runtime/display aliases are also shown and accepted. Real registered IDs take precedence over synthesized _ide aliases; an ID ending in _ide never receives an _ide_ide alias.`);
+        output.system.push(`${deferrals}/${total} tools are deferred ("${deferLabel}"). Before calling one, retrieve it with tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "<regex>" }). Deferred tools require a successful search before execution. Search results identify the canonical tool ID, which must be used for execution.`);
         if (!alerted) { alerted = true; toast(ctx, 'Tool Search', `${deferrals}/${total} tools deferred.`, 'info', 4000); }
       }
     },

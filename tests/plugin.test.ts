@@ -168,18 +168,6 @@ describe('ToolSearchPlugin', () => {
 
 
 
-  it('authorizes canonical and _ide alias execution names', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
-    await hooks['tool.definition']!({ toolID: 'alias_probe' }, { description: 'Read a file', parameters: {} });
-    const regexTool = (hooks.tool as any).tool_search_regex;
-    const result = await regexTool.execute({ pattern: '^alias_probe_ide$' }, { sessionID: 'alias-session' });
-    expect(result).toContain('alias_probe: Read a file (alias: alias_probe_ide)');
-
-    const output = { output: 'File contents' };
-    await hooks['tool.execute.after']!({ tool: 'alias_probe_ide', sessionID: 'alias-session', callID: 'c1' } as any, output as any);
-    expect(output.output).toBe('File contents');
-  });
-
   it('persists structured _ide authorization through a real serialized restart', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'tool-search-auth-'));
     const previousCache = process.env.XDG_CACHE_HOME;
@@ -289,18 +277,17 @@ describe('ToolSearchPlugin', () => {
     expect(output.output).toContain('executed without prior search');
   });
 
-  it('documents precise canonical and runtime alias policy guidance', async () => {
+  it('documents precise canonical tool policy guidance', async () => {
     const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
     await hooks['tool.definition']!({ toolID: 'policy_tool' }, { description: 'Policy tool', parameters: {} });
     const output = { system: [] as string[] };
     await hooks['experimental.chat.system.transform']!({ sessionID: 'policy-session' } as any, output as any);
     expect(output.system.join('\\n')).toContain('canonical tool ID');
-    expect(output.system.join('\\n')).toContain('runtime/display alias');
-    expect(output.system.join('\\n')).toContain('Real registered IDs take precedence');
-    expect(output.system.join('\\n')).toContain('ending in _ide never receives an _ide_ide alias');
+    expect(output.system.join('\\n')).toContain('which must be used for execution');
+    expect(output.system.join('\\n')).not.toContain('alias');
   });
 
-  it('does not authorize a real collision after searching a synthesized alias', async () => {
+  it('does not authorize a real tool after searching another canonical tool', async () => {
     const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
     await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
     const regexTool = (hooks.tool as any).tool_search_regex;

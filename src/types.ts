@@ -2,7 +2,6 @@ export interface ToolMeta {
   id: string;
   description: string;
   parameters: unknown;
-  aliases?: string[];
 }
 
 export interface ScoreParams {
