@@ -52,7 +52,32 @@ describe('ToolVault', () => {
     expect(v.grep('nonexistent', 5).length).toBe(0);
   });
 
-  it('grep returns empty for invalid but non-crashing regex', () => {
+  it('supports canonical and built-in _ide aliases without duplicate hits or collisions', () => {
+    const v = new ToolVault();
+    v.add('read', 'Read a file', {});
+    v.add('grep', 'Search files', {});
+
+    expect(v.grep('^read$', 5).map((tool) => tool.id)).toEqual(['read']);
+    expect(v.grep('^read_ide$', 5).map((tool) => tool.id)).toEqual(['read']);
+    expect(v.grep('^(read_ide|grep_ide)$', 5).map((tool) => tool.id)).toEqual(['read', 'grep']);
+    expect(v.grep('^read_ide$', 5)[0].aliases).toEqual(['read_ide']);
+
+    v.add('foo', 'Canonical foo', {});
+    v.add('foo_ide', 'Real runtime tool', {});
+    expect(v.grep('^foo_ide$', 5).map((tool) => tool.id)).toEqual(['foo_ide']);
+    expect(v.get('foo')?.aliases).toEqual([]);
+    expect(v.get('foo_ide')?.aliases).toEqual([]);
+    expect(v.grep('^foo_ide_ide$', 5)).toEqual([]);
+  });
+
+  it('indexes aliases in BM25 without creating duplicate records', () => {
+    const v = new ToolVault();
+    v.add('read', 'Read a file', {});
+    expect(v.queryBM25('read_ide', 5).map((tool) => tool.id)).toEqual(['read']);
+    expect(v.list().map((tool) => tool.id)).toEqual(['read']);
+  });
+
+  it('grep returns no matches for invalid regex', () => {
     const v = new ToolVault();
     v.add('test', 'test tool', {});
     expect(v.grep('test.*[abc', 5)).toEqual([]);

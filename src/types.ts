@@ -2,6 +2,7 @@ export interface ToolMeta {
   id: string;
   description: string;
   parameters: unknown;
+  aliases?: string[];
 }
 
 export interface ScoreParams {
@@ -16,6 +17,7 @@ export interface Hit<T> {
 
 export interface ToolSearchConfig {
   alwaysLoad?: string[];
+  resetTools?: string[];
   bm25?: Partial<ScoreParams>;
   embedding?: {
     enabled: boolean;
