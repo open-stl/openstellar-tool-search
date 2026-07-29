@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { ToolVault } from '../src/vault.js';
 import { SemanticMatcher } from '../src/matcher.js';
+import { RankEngine } from '../src/rank.js';
 
 describe('ToolVault', () => {
   const deferred = <T = void>() => {
@@ -61,6 +62,45 @@ describe('ToolVault', () => {
     const results = v.queryBM25('read grep bash', 10);
     const ids = results.map((r) => r.id);
     expect(ids).toContain('bash');
+  });
+
+  it('shares nested schema vocabulary between lexical and semantic indexing', async () => {
+    const feed = vi.spyOn(RankEngine.prototype, 'feed');
+    const index = vi.spyOn(SemanticMatcher.prototype, 'index').mockResolvedValue(undefined);
+    vi.spyOn(SemanticMatcher.prototype, 'locate').mockResolvedValue(new Map());
+    const v = new ToolVault({ embedding: { enabled: true } });
+    v.add('configure', 'Configure a service', {
+      type: 'object',
+      properties: {
+        settings: {
+          type: 'object',
+          description: 'Service settings',
+          properties: {
+            retryPolicy: { type: 'string', description: 'Retry strategy' },
+          },
+        },
+        targets: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              endpoint: { type: 'string', description: 'Destination URL' },
+            },
+          },
+        },
+      },
+    });
+
+    expect(v.queryBM25('retryPolicy', 5)[0].id).toBe('configure');
+    const lexicalText = (feed.mock.calls[0][1])(v.list()[0]).join(' ');
+    await v.query('Destination URL', 5);
+    const semanticText = index.mock.calls[0][0][0].text;
+
+    expect(semanticText).toBe(lexicalText);
+    expect(semanticText).toContain('settings.retryPolicy');
+    expect(semanticText).toContain('targets.endpoint');
+    expect(semanticText).toContain('Retry strategy');
+    expect(semanticText).toContain('Destination URL');
   });
 
   it('grep returns regex matches', () => {

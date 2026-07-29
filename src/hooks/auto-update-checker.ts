@@ -38,20 +38,28 @@ export function getCurrentVersion(): string | null {
     return null;
 }
 
-async function defaultGetLatestVersionUrl(): Promise<string> {
-    const { url } = await resolveRegistryUrl();
-    return buildDistTagsUrl(url, PACKAGE_NAME)!;
+export interface LatestVersionEffects {
+    resolveRegistryUrl: typeof resolveRegistryUrl;
+    fetch: typeof fetch;
 }
 
-export async function getLatestVersion(): Promise<string | null> {
-    const distTagsUrl = await defaultGetLatestVersionUrl();
+const defaultLatestVersionEffects: LatestVersionEffects = {
+    resolveRegistryUrl,
+    fetch,
+};
+
+export async function getLatestVersion(
+    effects: LatestVersionEffects = defaultLatestVersionEffects,
+): Promise<string | null> {
+    const { url } = await effects.resolveRegistryUrl();
+    const distTagsUrl = buildDistTagsUrl(url, PACKAGE_NAME);
     if (!distTagsUrl) return null;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), NPM_FETCH_TIMEOUT);
 
     try {
-        const response = await fetch(distTagsUrl, {
+        const response = await effects.fetch(distTagsUrl, {
             signal: controller.signal,
             headers: { Accept: 'application/json' },
         });
@@ -124,14 +132,12 @@ export function isNewerVersion(latest: string, current: string): boolean {
 
 export interface UpdateCheckEffects {
     getCurrentVersion: () => string | null;
-    getLatestVersionUrl?: () => Promise<string>;
     getLatestVersion: () => Promise<string | null>;
     invalidatePackageCache: () => boolean;
 }
 
 const defaultUpdateCheckEffects: UpdateCheckEffects = {
     getCurrentVersion,
-    getLatestVersionUrl: defaultGetLatestVersionUrl,
     getLatestVersion,
     invalidatePackageCache,
 };
@@ -151,31 +157,7 @@ export async function checkForUpdate(
 
     let latestVersion: string | null;
     try {
-        if (effects.getLatestVersionUrl) {
-            const distTagsUrl = await effects.getLatestVersionUrl();
-            if (distTagsUrl) {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), NPM_FETCH_TIMEOUT);
-                try {
-                    const response = await fetch(distTagsUrl, {
-                        signal: controller.signal,
-                        headers: { Accept: 'application/json' },
-                    });
-                    if (response.ok) {
-                        const data = (await response.json()) as Record<string, string>;
-                        latestVersion = data.latest ?? null;
-                    } else {
-                        latestVersion = null;
-                    }
-                } finally {
-                    clearTimeout(timeoutId);
-                }
-            } else {
-                latestVersion = null;
-            }
-        } else {
-            latestVersion = await effects.getLatestVersion();
-        }
+        latestVersion = await effects.getLatestVersion();
     } catch {
         latestVersion = null;
     }

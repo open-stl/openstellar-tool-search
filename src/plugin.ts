@@ -3,8 +3,7 @@ import { tool } from '@opencode-ai/plugin';
 import { ToolVault } from './vault.js';
 import type { ToolMeta, ToolSearchConfig } from './types.js';
 import { checkForUpdate, formatUpdateMessage } from './hooks/auto-update-checker.js';
-import { AuthPersistence } from './auth-persistence.js';
-import type { PersistedToolAuthorization } from './auth-persistence.js';
+import { AuthorizationState } from './authorization-state.js';
 
 const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
 const DEFAULT_DEFER = '[deferred]';
@@ -41,18 +40,8 @@ function toast(
   }, 100);
 }
 
-function canonicalAuthorization(id: string): PersistedToolAuthorization {
-  return { kind: 'canonical-tool', version: 1, canonicalId: id };
-}
-
-function authorizationId(value: PersistedToolAuthorization): string | undefined {
-  if (typeof value === 'string') return value.startsWith('@canonical:') || value.endsWith('_ide') ? undefined : value;
-  return value.kind === 'canonical-tool' && value.version === 1 ? value.canonicalId : undefined;
-}
-
 export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Promise<Hooks> => {
   const opts = (options ?? {}) as ToolSearchConfig;
-  const alwaysOn = new Set([...SEARCH_IDS, ...(opts.alwaysLoad ?? [])]);
   const resetToolIDs = new Set(['compress', ...(opts.resetTools ?? [])]);
   const maxResults = opts.searchLimit ?? 10;
   const deferLabel = opts.deferDescription ?? DEFAULT_DEFER;
@@ -61,27 +50,15 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
     b: opts.bm25?.b,
     embedding: opts.embedding ?? { enabled: true },
   });
-  const persistence = new AuthPersistence();
-  const loaded = persistence.load();
-  const authorizations = loaded.authorizations;
-  const lastSeen = loaded.lastSeen;
-  for (const set of authorizations.values()) {
-    for (const value of set) if (authorizationId(value) === undefined) set.delete(value);
-  }
-  const deferredTools = new Set<string>();
+  const authorization = new AuthorizationState({
+    alwaysOn: [...SEARCH_IDS, ...(opts.alwaysLoad ?? [])],
+    resetTools: resetToolIDs,
+  });
   let deferrals = 0;
   let total = 0;
   let alerted = false;
   let updateCheckInFlight: Promise<void> | null = null;
   let updateStaged = false;
-
-  const authorize = (sessionID: string | undefined, hits: ToolMeta[]) => {
-    if (!sessionID) return;
-    let set = authorizations.get(sessionID);
-    if (!set) { set = new Set(); authorizations.set(sessionID, set); }
-    for (const hit of hits) set.add(canonicalAuthorization(hit.id));
-    persistence.save(authorizations, lastSeen);
-  };
 
   const formatHit = (r: ToolMeta) => {
     const paramsInfo = r.parameters && typeof r.parameters === 'object' && Object.keys(r.parameters).length > 0 ? `\n  parameters: ${JSON.stringify(r.parameters)}` : '';
@@ -98,7 +75,7 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
         async execute(args, context) {
           const hits = await vault.query(args.query, maxResults);
           if (hits.length === 0) return `No matches for "${args.query}". Try broader terms or tool_search_regex.`;
-          authorize(context?.sessionID, hits);
+          authorization.authorize(context?.sessionID, hits);
           return `Found ${hits.length} tool(s):\n\n${hits.map(formatHit).join('\n\n')}`;
         },
       }),
@@ -108,7 +85,7 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
         async execute(args, context) {
           const hits = vault.grep(args.pattern, maxResults);
           if (hits.length === 0) return `No tools matched pattern "${args.pattern}".`;
-          authorize(context?.sessionID, hits);
+          authorization.authorize(context?.sessionID, hits);
           return `Found ${hits.length} tool(s):\n\n${hits.map(formatHit).join('\n\n')}`;
         },
       }),
@@ -116,36 +93,26 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
     'tool.definition': async (input, output) => {
       if (SEARCH_IDS.has(input.toolID)) return;
       vault.add(input.toolID, output.description, output.parameters);
-      if (!alwaysOn.has(input.toolID)) {
-        deferredTools.add(input.toolID);
+      if (authorization.registerTool(input.toolID)) {
         const firstSentence = getFirstSentence(output.description);
         output.description = firstSentence ? `${firstSentence} ${deferLabel}` : deferLabel;
       }
     },
     'tool.execute.after': async (input, output) => {
-      if (resetToolIDs.has(input.tool)) {
-        if (input.sessionID) {
-          authorizations.delete(input.sessionID); lastSeen.delete(input.sessionID);
-          persistence.deleteSession(input.sessionID); persistence.save(authorizations, lastSeen);
-        }
+      if (authorization.resetIfConfigured(input.tool, input.sessionID)) {
         output.output = `${String(output.output ?? '')}\n\n[Tool Search] Deferred tool authorizations have been reset — search for any tools you need to use.`;
         return;
       }
       if (SEARCH_IDS.has(input.tool)) return;
       const meta = vault.get(input.tool);
       const canonical = meta?.id ?? input.tool;
-      if (alwaysOn.has(input.tool) || alwaysOn.has(canonical)) return;
-      if (!deferredTools.has(input.tool) && !deferredTools.has(canonical)) return;
-      const authorized = input.sessionID ? authorizations.get(input.sessionID) : undefined;
-      const allowed = authorized && Array.from(authorized).some((value) => authorizationId(value) === canonical)
-        && input.tool === canonical;
-      if (!allowed) {
+      if (authorization.requiresReminder(input.sessionID, input.tool, canonical)) {
         output.output = `${String(output.output ?? '')}\n\n[Tool Search Reminder] "${input.tool}" executed without prior search. Run tool_search_regex({ pattern: "^${input.tool}$" }) now to inspect its full description and verify the call was correct. Do not blindly repeat the call; take corrective or follow-up action only if the full description shows it is necessary.`;
       }
     },
     'experimental.chat.system.transform': async (input, output) => {
       total = vault.count;
-      deferrals = deferredTools.size;
+      deferrals = authorization.deferredCount;
 
       if (deferrals > 0) {
         output.system.push(`${deferrals}/${total} tools are deferred ("${deferLabel}"). Before calling one, retrieve it with tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "<regex>" }). Deferred tools require a successful search before execution. Search results identify the canonical tool ID, which must be used for execution. When the tool ID is already known, prefer tool_search_regex({ pattern: "^<id>$" }) for a reliable exact match — multi-term queries to tool_search may not return every matching tool.`);
@@ -153,14 +120,13 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
       }
     },
     'experimental.session.compacting': async (input, output) => {
-      authorizations.delete(input.sessionID); lastSeen.delete(input.sessionID);
-      persistence.deleteSession(input.sessionID); persistence.save(authorizations, lastSeen);
+      authorization.resetSession(input.sessionID);
       output.context.push('[Tool Search] Session compacted. Deferred tool authorizations have been reset — search for any tools you need to use.');
     },
     event: async ({ event }) => {
       if (event.type === 'session.deleted') {
         const sessionID = (event.properties as { sessionID?: unknown } | undefined)?.sessionID;
-        if (typeof sessionID === 'string' && sessionID.length > 0) { authorizations.delete(sessionID); lastSeen.delete(sessionID); persistence.deleteSession(sessionID); persistence.save(authorizations, lastSeen); }
+        if (typeof sessionID === 'string' && sessionID.length > 0) authorization.resetSession(sessionID);
         return;
       }
       if (event.type !== 'session.created' || updateStaged) return;

@@ -49,15 +49,17 @@ export class ToolVault {
     }
   }
 
+  private prepareIndexedText(entry: ToolMeta): string {
+    const fields = [entry.id, entry.description];
+    if (entry.parameters) fields.push(...extractParamTexts(entry.parameters));
+    return fields.join(' ');
+  }
+
   private buildScorer(): void {
     if (!this.scorerStale) return;
     const items = Array.from(this.store.values());
     this.scorer = new RankEngine<ToolMeta>(this.scorerCfg.k1, this.scorerCfg.b);
-    this.scorer.feed(items, (e) => {
-      const fields = [e.id, e.description];
-      if (e.parameters) fields.push(...extractParamTexts(e.parameters));
-      return fields;
-    });
+    this.scorer.feed(items, (e) => [this.prepareIndexedText(e)]);
     this.scorerStale = false;
   }
 
@@ -67,7 +69,7 @@ export class ToolVault {
     const generation = this.semanticGeneration;
     const indexed = Array.from(this.store.values()).map((e) => ({
       id: e.id,
-      text: [e.id, e.description, ...extractParamTexts(e.parameters)].join(' '),
+      text: this.prepareIndexedText(e),
     }));
     let build: Promise<void>;
     build = this.semantic.index(indexed).then(() => {

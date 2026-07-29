@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { invalidatePackageCache } from '../src/hooks/auto-update-checker.js';
 import {
     checkForUpdate,
+    getLatestVersion,
     getPackageCacheTargets,
     isNewerVersion,
 } from '../src/hooks/auto-update-checker.js';
@@ -372,53 +373,32 @@ describe('npm-registry : resolveRegistryUrl', () => {
 });
 
 // ---------------------------------------------------------------------------
-// auto-update-checker : getLatestVersionUrl wiring
+// auto-update-checker : latest-version retrieval seam
 // ---------------------------------------------------------------------------
 
-describe('auto-update-checker : getLatestVersionUrl wiring', () => {
-    it('getLatestVersion uses the resolved URL from getLatestVersionUrl effect', async () => {
-        const distTagsUrl =
-            'https://custom-registry.example.com/-/package/%40openstellar%2Ftool-search/dist-tags';
+describe('auto-update-checker : latest-version retrieval seam', () => {
+    it('resolves the registry, builds the endpoint, and fetches through one effect', async () => {
+        const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ latest: '1.0.1' }) }) as Response);
+        const resolveRegistryUrl = vi.fn(async () => ({ url: 'https://custom-registry.example.com/npm', source: 'scoped' as const }));
 
-        // Mock fetch to capture the URL it was called with
-        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-            ok: true,
-            json: async () => ({ latest: '1.0.1' }),
-        } as Response);
-
-        const result = await checkForUpdate({
-            getCurrentVersion: () => '1.0.0',
-            getLatestVersionUrl: async () => distTagsUrl,
-            getLatestVersion: async () => {
-                throw new Error('should not be called');
-            },
-            invalidatePackageCache: () => true,
-        });
-
-        expect(fetchSpy).toHaveBeenCalledWith(
-            distTagsUrl,
+        await expect(getLatestVersion({ resolveRegistryUrl, fetch })).resolves.toBe('1.0.1');
+        expect(resolveRegistryUrl).toHaveBeenCalledTimes(1);
+        expect(fetch).toHaveBeenCalledWith(
+            'https://custom-registry.example.com/npm/-/package/%40openstellar%2Ftool-search/dist-tags',
             expect.objectContaining({ signal: expect.any(AbortSignal) }),
         );
-        expect(result).toMatchObject({
-            outcome: 'update-staged',
-            currentVersion: '1.0.0',
-            latestVersion: '1.0.1',
-        });
-        fetchSpy.mockRestore();
     });
 
-    it('falls back to getLatestVersion when getLatestVersionUrl is not provided', async () => {
-        let called = false;
+    it('uses the injected latest-version retrieval effect for the complete check', async () => {
+        const getLatestVersion = vi.fn(async () => '1.0.1');
+
         const result = await checkForUpdate({
             getCurrentVersion: () => '1.0.0',
-            getLatestVersion: async () => {
-                called = true;
-                return '1.0.1';
-            },
+            getLatestVersion,
             invalidatePackageCache: () => true,
         });
 
-        expect(called).toBe(true);
+        expect(getLatestVersion).toHaveBeenCalledTimes(1);
         expect(result).toMatchObject({
             outcome: 'update-staged',
             currentVersion: '1.0.0',
@@ -426,13 +406,10 @@ describe('auto-update-checker : getLatestVersionUrl wiring', () => {
         });
     });
 
-    it('returns check-failed when getLatestVersionUrl returns null', async () => {
+    it('returns check-failed when the retrieval effect cannot provide a version', async () => {
         const result = await checkForUpdate({
             getCurrentVersion: () => '1.0.0',
-            getLatestVersionUrl: async () => null as unknown as string,
-            getLatestVersion: async () => {
-                throw new Error('should not be called');
-            },
+            getLatestVersion: async () => null,
             invalidatePackageCache: () => true,
         });
 
