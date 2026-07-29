@@ -351,6 +351,22 @@ describe('E2E: system.transform hook', () => {
   });
 });
 
+describe('E2E: skill authorization policy', () => {
+  it('system prompt requires an exact literal lookup for every skill invocation', async () => {
+    const ctx = makeCtx();
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
+    await hooks['tool.definition']!({ toolID: 'skill' }, { description: 'Run a skill', parameters: {} });
+    await hooks['tool.definition']!({ toolID: 'deferred_tool' }, { description: 'A deferred tool', parameters: {} });
+    const out: any = { system: [] };
+    await hooks['experimental.chat.system.transform']!({} as any, out);
+    const policy = out.system.join('\\n');
+    expect(policy).toContain('each skill call, including nested or repeated calls');
+    expect(policy).toContain('new literal tool_search_regex({ pattern: "^skill$" })');
+    expect(policy).toContain('natural-language search and every other pattern do not authorize skill');
+    expect(policy).toContain('One exact successful lookup permits one skill invocation');
+  });
+});
+
 describe('E2E: config options', () => {
   it('21. deferDescription custom label replaces [deferred] with user value', async () => {
     const ctx = makeCtx();

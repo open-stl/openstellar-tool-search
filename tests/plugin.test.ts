@@ -303,6 +303,88 @@ describe('ToolSearchPlugin', () => {
     expect(output.output).toContain('^foo_ide$');
   });
 
+  describe('per-call skill authorization', () => {
+    async function skillHooks(options: Record<string, unknown> = {}) {
+      const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false }, ...options });
+      await hooks['tool.definition']!({ toolID: 'skill' }, { description: 'Run a nested skill by name', parameters: {} });
+      await hooks['tool.definition']!({ toolID: 'ordinary_tool' }, { description: 'An ordinary deferred tool', parameters: {} });
+      return hooks;
+    }
+
+    async function expectSkillRejected(hooks: any, sessionID?: string) {
+      await expect(hooks['tool.execute.before']!({ tool: 'skill', sessionID } as any)).rejects.toThrow(
+        'Every skill call requires a new literal tool_search_regex',
+      );
+    }
+
+    it('rejects skill without lookup, natural search, broad/equivalent regex, and whitespace regex', async () => {
+      const hooks = await skillHooks();
+      const search = (hooks.tool as any).tool_search;
+      const regex = (hooks.tool as any).tool_search_regex;
+      const context = { sessionID: 'skill-reject-session' };
+      await expectSkillRejected(hooks, context.sessionID);
+      await search.execute({ query: 'skill' }, context);
+      await expectSkillRejected(hooks, context.sessionID);
+      for (const pattern of ['skill', '.*skill.*', '^skill$|^other$', ' ^skill$']) {
+        await regex.execute({ pattern }, context);
+        await expectSkillRejected(hooks, context.sessionID);
+      }
+    });
+
+    it('permits exactly one skill call, and unrelated tools invalidate the permit', async () => {
+      const hooks = await skillHooks();
+      const regex = (hooks.tool as any).tool_search_regex;
+      const sessionID = 'skill-per-call-session';
+      await regex.execute({ pattern: '^skill$' }, { sessionID });
+      await hooks['tool.execute.before']!({ tool: 'skill', sessionID } as any, {} as any);
+      await expectSkillRejected(hooks, sessionID);
+      await regex.execute({ pattern: '^skill$' }, { sessionID });
+      await hooks['tool.execute.before']!({ tool: 'ordinary_tool', sessionID } as any, {} as any);
+      await expectSkillRejected(hooks, sessionID);
+      await regex.execute({ pattern: '^skill$' }, { sessionID });
+      await hooks['tool.execute.before']!({ tool: 'skill', sessionID } as any, {} as any);
+    });
+
+    it('isolates permits by session and rejects missing session context', async () => {
+      const hooks = await skillHooks();
+      const regex = (hooks.tool as any).tool_search_regex;
+      await regex.execute({ pattern: '^skill$' }, { sessionID: 'session-a' });
+      await expectSkillRejected(hooks, 'session-b');
+      await expectSkillRejected(hooks);
+      await hooks['tool.execute.before']!({ tool: 'skill', sessionID: 'session-a' } as any, {} as any);
+    });
+
+    it('does not let alwaysLoad skill bypass the special gate', async () => {
+      const hooks = await skillHooks({ alwaysLoad: ['skill'] });
+      await expectSkillRejected(hooks, 'always-load-session');
+    });
+
+    it('clears an unused permit on reset, compaction, and session deletion', async () => {
+      const resetCases = [
+        { name: 'reset', clear: async (hooks: any, sessionID: string) => hooks['tool.execute.after']!({ tool: 'compress', sessionID } as any, { output: 'compressed' } as any) },
+        { name: 'compaction', clear: async (hooks: any, sessionID: string) => hooks['experimental.session.compacting']!({ sessionID } as any, { context: [] } as any) },
+        { name: 'session deletion', clear: async (hooks: any, sessionID: string) => hooks.event!({ event: { type: 'session.deleted', properties: { sessionID } } } as any) },
+      ];
+      for (const testCase of resetCases) {
+        const hooks = await skillHooks();
+        const sessionID = `clear-${testCase.name}`;
+        await (hooks.tool as any).tool_search_regex.execute({ pattern: '^skill$' }, { sessionID });
+        await testCase.clear(hooks, sessionID);
+        await expectSkillRejected(hooks, sessionID);
+      }
+    });
+
+    it('keeps generic unauthorized execution as an after-hook reminder', async () => {
+      const hooks = await skillHooks();
+      const sessionID = 'generic-reminder-session';
+      await expect(hooks['tool.execute.before']!({ tool: 'ordinary_tool', sessionID } as any, {} as any)).resolves.toBeUndefined();
+      const output = { output: 'ordinary result' };
+      await hooks['tool.execute.after']!({ tool: 'ordinary_tool', sessionID, callID: 'ordinary' } as any, output as any);
+      expect(output.output).toContain('[Tool Search Reminder]');
+      expect(output.output).toContain('executed without prior search');
+    });
+  });
+
   it('reminds after unauthorized deferred tool execution and stays quiet after authorization', async () => {
     const hooks = await ToolSearchPlugin({} as any);
 

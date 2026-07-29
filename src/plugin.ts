@@ -84,6 +84,7 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
         args: { pattern: tool.schema.string().describe('Case-insensitive regex for tool IDs and descriptions.') },
         async execute(args, context) {
           const hits = vault.grep(args.pattern, maxResults);
+          authorization.grantSkillPermit(context?.sessionID, args.pattern, hits);
           if (hits.length === 0) return `No tools matched pattern "${args.pattern}".`;
           authorization.authorize(context?.sessionID, hits);
           return `Found ${hits.length} tool(s):\n\n${hits.map(formatHit).join('\n\n')}`;
@@ -97,6 +98,9 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
         const firstSentence = getFirstSentence(output.description);
         output.description = firstSentence ? `${firstSentence} ${deferLabel}` : deferLabel;
       }
+    },
+    'tool.execute.before': async (input) => {
+      authorization.beforeToolExecute(input.tool, input.sessionID);
     },
     'tool.execute.after': async (input, output) => {
       if (authorization.resetIfConfigured(input.tool, input.sessionID)) {
@@ -115,7 +119,7 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
       deferrals = authorization.deferredCount;
 
       if (deferrals > 0) {
-        output.system.push(`${deferrals}/${total} tools are deferred ("${deferLabel}"). Before calling one, retrieve it with tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "<regex>" }). Deferred tools require a successful search before execution. Search results identify the canonical tool ID, which must be used for execution. When the tool ID is already known, prefer tool_search_regex({ pattern: "^<id>$" }) for a reliable exact match — multi-term queries to tool_search may not return every matching tool.`);
+        output.system.push(`${deferrals}/${total} tools are deferred ("${deferLabel}"). Before calling one, retrieve it with tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "<regex>" }). Deferred tools require a successful search before execution. Search results identify the canonical tool ID, which must be used for execution. Exception: each skill call, including nested or repeated calls, requires a new literal tool_search_regex({ pattern: "^skill$" }) immediately before that call; natural-language search and every other pattern do not authorize skill. One exact successful lookup permits one skill invocation. When the tool ID is already known, prefer tool_search_regex({ pattern: "^<id>$" }) for a reliable exact match — multi-term queries to tool_search may not return every matching tool.`);
         if (!alerted) { alerted = true; toast(ctx, 'Tool Search', `${deferrals}/${total} tools deferred.`, 'info', 4000); }
       }
     },
