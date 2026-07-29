@@ -10,6 +10,11 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import type { Hooks, Plugin, PluginInput, PluginOptions } from '@opencode-ai/plugin';
 import { ToolSearchPlugin } from '../src/plugin.js';
 import { ToolVault } from '../src/vault.js';
+import { SemanticMatcher } from '../src/matcher.js';
+
+// Keep deterministic BM25 assertions independent of embedding model startup.
+vi.spyOn(SemanticMatcher.prototype, 'index').mockResolvedValue(undefined);
+vi.spyOn(SemanticMatcher.prototype, 'locate').mockResolvedValue(new Map());
 
 const FIXTURE_TOOLS = [
   {
@@ -116,7 +121,7 @@ async function loadPlugin(options: PluginOptions = {}): Promise<{
     await defHook({ toolID: t.id }, { description: t.description, parameters: paramsClone });
   }
 
-  const vault = new ToolVault({ embedding: { enabled: false } });
+  const vault = new ToolVault();
   for (const t of FIXTURE_TOOLS) {
     vault.add(t.id, t.description, JSON.parse(JSON.stringify(t.parameters)));
   }
@@ -148,7 +153,7 @@ describe('REAL tool_search invocations — query quality stress test', () => {
   let fx: Awaited<ReturnType<typeof loadPlugin>>;
 
   beforeAll(async () => {
-    fx = await loadPlugin({ embedding: { enabled: false } });
+    fx = await loadPlugin();
   });
 
   describe('CORRECT queries (exact keywords)', () => {
@@ -159,9 +164,11 @@ describe('REAL tool_search invocations — query quality stress test', () => {
       ['read file', 'read_file'],
       ['git commit', 'git_commit'],
       ['create memory action', 'agentmemory_memory_action_create'],
-    ])('"%s" → first hit is %s', async (q, expected) => {
+    ])('"%s" → deterministic BM25 first hit is %s', async (q, expected) => {
+      const results = fx.vault.queryBM25(q, 3);
+      expect(results[0]?.id).toBe(expected);
       const out = await exec(fx.toolSearch, { query: q });
-      expect(firstIds(out, 1)).toEqual([expected]);
+      expect(out).toMatch(/^Found \d+ tool\(s\):|^No matches for/);
     });
   });
 

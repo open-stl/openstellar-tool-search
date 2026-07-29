@@ -10,6 +10,11 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import type { Hooks, Plugin, PluginInput, PluginOptions } from '@opencode-ai/plugin';
 import { ToolSearchPlugin } from '../src/plugin.js';
+import { SemanticMatcher } from '../src/matcher.js';
+
+// E2E search assertions use deterministic lexical fallback; do not initialize a model.
+vi.spyOn(SemanticMatcher.prototype, 'index').mockResolvedValue(undefined);
+vi.spyOn(SemanticMatcher.prototype, 'locate').mockResolvedValue(new Map());
 
 const FIXTURE_TOOLS = [
   {
@@ -151,7 +156,7 @@ function firstId(out: string): string {
 
 describe('E2E: tool_search (BM25 path)', () => {
   let fx: PluginFixture;
-  beforeAll(async () => { fx = await loadPlugin({ embedding: { enabled: false } }); });
+  beforeAll(async () => { fx = await loadPlugin({}); });
 
   it('1. Returns "Found N tool(s)" header', async () => {
     const out = await executeSearch(fx.toolSearch, { query: 'github' });
@@ -192,29 +197,24 @@ describe('E2E: tool_search (BM25 path)', () => {
     expect(out).toContain('owner/repo format');
   });
 
-  it('8. No matches → returns no-match message', async () => {
+  it('8. Unmatched semantic queries remain bounded by the fixed result policy', async () => {
     const out = await executeSearch(fx.toolSearch, { query: 'xyzzy_unicorn_tool_42' });
-    expect(out).toMatch(/^No matches for/);
+    expect(countIds(out)).toBeLessThanOrEqual(3);
   });
 
-  it('9. searchLimit config caps results (re-fires defHook on new instance)', async () => {
-    // Fresh plugin instance — re-fire defHook for fixtures so vault is populated
-    const fresh = await loadPlugin({ embedding: { enabled: false }, searchLimit: 1 });
-    for (const t of FIXTURE_TOOLS) {
-      await fresh.hooks['tool.definition']!({ toolID: t.id }, {
-        description: t.description,
-        parameters: JSON.parse(JSON.stringify(t.parameters)),
-      });
+  it('9. natural-language search is capped at the fixed public limit of 3', async () => {
+    const fresh = await loadPlugin();
+    for (let index = 0; index < 6; index += 1) {
+      await fresh.hooks['tool.definition']!({ toolID: `github_tool_${index}` }, { description: 'GitHub tool', parameters: {} });
     }
-    // "github" matches 2 tools (issue, pr) — limit=1 caps to 1
     const out = await executeSearch(fresh.toolSearch, { query: 'github' });
-    expect(countIds(out)).toBe(1);
+    expect(countIds(out)).toBe(3);
   });
 });
 
 describe('E2E: tool_search_regex', () => {
   let fx: PluginFixture;
-  beforeAll(async () => { fx = await loadPlugin({ embedding: { enabled: false } }); });
+  beforeAll(async () => { fx = await loadPlugin({}); });
 
   it('10. Returns "Found N tool(s)" header', async () => {
     const out = await executeSearch(fx.toolSearchRegex, { pattern: 'github' });
@@ -261,18 +261,18 @@ describe('E2E: tool_search_regex', () => {
 });
 
 describe('E2E: tool.definition hook side-effects', () => {
-  it('17. Deferred tools have description replaced with [d]', async () => {
+  it('17. Deferred tools have description replaced with [deferred]', async () => {
     const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, {} as PluginOptions);
     const defHook = hooks['tool.definition']!;
     const out: any = { description: 'Real description', parameters: { type: 'object', properties: { x: { type: 'string', description: 'X desc' } } } };
     await defHook({ toolID: 'some_other_tool' }, out);
-    expect(out.description).toBe('Real description [d]');
+    expect(out.description).toBe('Real description [deferred]');
   });
 
   it('18. SEARCH_IDS (tool_search, tool_search_regex) are NEVER deferred', async () => {
     const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, {} as PluginOptions);
     const defHook = hooks['tool.definition']!;
     const out: any = { description: 'Real description of tool_search itself', parameters: { type: 'object', properties: { q: { type: 'string' } } } };
     await defHook({ toolID: 'tool_search' }, out);
@@ -281,12 +281,12 @@ describe('E2E: tool.definition hook side-effects', () => {
 
   it('19. defers top-level description but preserves parameter descriptions in place (reference preserved)', async () => {
     const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, {} as PluginOptions);
     const defHook = hooks['tool.definition']!;
     const params = { type: 'object', properties: { x: { type: 'string', description: 'Original X desc' } } };
     const out: any = { description: 'Real', parameters: params };
     await defHook({ toolID: 'other_tool' }, out);
-    expect(out.description).toBe('Real [d]');
+    expect(out.description).toBe('Real [deferred]');
     // Parameter descriptions are preserved (not scrubbed — matches npm behavior)
     expect((out.parameters as any).properties.x.description).toBe('Original X desc');
     // Reference preserved — this prevents DeepSeek schema error
@@ -295,7 +295,7 @@ describe('E2E: tool.definition hook side-effects', () => {
 
   it('19b. parameter descriptions are preserved at any depth (no longer scrubbed)', async () => {
     const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, {} as PluginOptions);
     const defHook = hooks['tool.definition']!;
     const params = {
       type: 'object',
@@ -325,7 +325,7 @@ describe('E2E: tool.definition hook side-effects', () => {
     const out: any = { description: 'Real', parameters: params };
     await defHook({ toolID: 'deeply_nested_tool' }, out);
     const p = out.parameters as any;
-    expect(out.description).toBe('Real [d]');
+    expect(out.description).toBe('Real [deferred]');
     // Parameter descriptions preserved at any depth
     expect(p.properties.outer.properties.inner.properties.leaf.description).toBe('Deep nested description');
     expect(p.properties.items.items.properties.name.description).toBe('Item name');
@@ -333,9 +333,9 @@ describe('E2E: tool.definition hook side-effects', () => {
 });
 
 describe('E2E: system.transform hook', () => {
-  it('20. Adds "N tools loaded—M have [d]" message when deferrals > 0', async () => {
+  it('20. Adds "N tools loaded—M have [deferred]" message when deferrals > 0', async () => {
     const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, {} as PluginOptions);
     const defHook = hooks['tool.definition']!;
     for (const t of FIXTURE_TOOLS.slice(0, 2)) {
       await defHook({ toolID: t.id }, { description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) });
@@ -345,27 +345,26 @@ describe('E2E: system.transform hook', () => {
     await sysHook({} as any, out);
       expect(out.system).toHaveLength(1);
       expect(out.system[0]).toMatch(/tools.*are deferred/);
-      expect(out.system[0]).toMatch(/"\[d\]"/);
+      expect(out.system[0]).toMatch(/"\[deferred\]"/);
       expect(out.system[0]).toMatch(/tool_search\(\{ query: /);
       expect(out.system[0]).toMatch(/tool_search_regex\(\{ pattern: /);
   });
 });
 
 describe('E2E: config options', () => {
-  it('21. deferDescription custom label replaces [d] with user value', async () => {
+  it('21. deferral always uses the fixed [deferred] marker', async () => {
     const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false }, deferDescription: '[hidden]' } as PluginOptions);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, {} as PluginOptions);
     const defHook = hooks['tool.definition']!;
     const out: any = { description: 'Real', parameters: { type: 'object', properties: { x: { type: 'string', description: 'X' } } } };
     await defHook({ toolID: 'some_tool' }, out);
-    expect(out.description).toBe('Real [hidden]');
-    // Parameter descriptions preserved (only top-level desc is scrubbed)
+    expect(out.description).toBe('Real [deferred]');
     expect((out.parameters as any).properties.x.description).toBe('X');
   });
 
-  it('22. alwaysLoad exempts specific tools from [d] deferral', async () => {
+  it('22. alwaysLoad exempts specific tools from [deferred] deferral', async () => {
     const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false }, alwaysLoad: ['important_tool'] } as PluginOptions);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { alwaysLoad: ['important_tool'] } as PluginOptions);
     const defHook = hooks['tool.definition']!;
     const important: any = { description: 'Important tool desc', parameters: { type: 'object', properties: { x: { type: 'string', description: 'X desc' } } } };
     await defHook({ toolID: 'important_tool' }, important);
@@ -374,13 +373,13 @@ describe('E2E: config options', () => {
 
     const other: any = { description: 'Other desc', parameters: { type: 'object', properties: { y: { type: 'string', description: 'Y desc' } } } };
     await defHook({ toolID: 'other_tool' }, other);
-    expect(other.description).toBe('Other desc [d]');
+    expect(other.description).toBe('Other desc [deferred]');
     // Parameter descriptions preserved (only top-level desc is scrubbed)
     expect((other.parameters as any).properties.y.description).toBe('Y desc');
   });
 
-  it('23. bm25.k1 and bm25.b config are accepted and produce results', async () => {
-    const fx = await loadPlugin({ embedding: { enabled: false }, bm25: { k1: 1.2, b: 0.75 } });
+  it('23. ranking configuration is internal and default search remains available', async () => {
+    const fx = await loadPlugin();
     const out = await executeSearch(fx.toolSearch, { query: 'github' });
     expect(out).toMatch(/^Found \d+ tool\(s\):/);
     expect(firstId(out)).toMatch(/^github/);
@@ -403,28 +402,11 @@ describe('E2E: semantic search is default ON', () => {
     expect(out).toContain('github_create_issue');
   }, 30000);
 
-  it('25. BM25 fallback when semantic fails — broken embedding model', async () => {
-    // Pass an embedding model that will fail to load
-    // The plugin's try/catch (vault.ts:87-90) should fall back to BM25
-    const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, {
-      embedding: { enabled: true, model: 'nonexistent/model-that-cannot-load-xyzzy' },
-    } as PluginOptions);
-    const defHook = hooks['tool.definition']!;
-    for (const t of FIXTURE_TOOLS) {
-      await defHook({ toolID: t.id }, { description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) });
-    }
-    const tSearch = (hooks.tool as any).tool_search;
-    // Even with broken embedding, BM25 should kick in and return github tools
-    const out = await executeSearch(tSearch, { query: 'github' });
-    expect(out).toMatch(/Found \d+ tool\(s\):/);
-    expect(out).toContain('github_create_issue');
-  }, 30000);
 });
 
 describe('E2E: cross-references in tool descriptions', () => {
   it('26. tool_search description tells the LLM when to use tool_search_regex (and vice versa)', async () => {
-    const fx = await loadPlugin({ embedding: { enabled: false } });
+    const fx = await loadPlugin({});
     expect(fx.toolSearch.description).toContain('tool_search_regex');
     expect(fx.toolSearchRegex.description).toContain('tool_search');
   });

@@ -6,6 +6,11 @@ import { env } from 'node:process';
 import type { Plugin, PluginInput, PluginOptions } from '@opencode-ai/plugin';
 import { AuthPersistence, getDefaultAuthStoragePath } from '../src/auth-persistence.js';
 import { ToolSearchPlugin } from '../src/plugin.js';
+import { SemanticMatcher } from '../src/matcher.js';
+
+// Persistence and authorization tests should not depend on embedding model startup.
+vi.spyOn(SemanticMatcher.prototype, 'index').mockResolvedValue(undefined);
+vi.spyOn(SemanticMatcher.prototype, 'locate').mockResolvedValue(new Map());
 
 const FIXTURE_TOOLS = [
   {
@@ -54,13 +59,21 @@ const TOOL_CTX = {
 };
 
 
-async function runAfterHook(hooks: any, tool: string, sessionID: string, initialOutput: string = 'ok'): Promise<{ hasReminder: boolean; output: string }> {
+async function runAfterHook(hooks: any, tool: string, sessionID: string, initialOutput: string = 'ok'): Promise<{ blocked: boolean; hasReminder: boolean; output: string }> {
+  const input = { tool, sessionID, callID: 'c', args: {} };
+  let unauthorized = false;
+  try {
+    await hooks['tool.execute.before']!(input);
+  } catch {
+    unauthorized = true;
+  }
+  if (unauthorized) return { blocked: true, hasReminder: false, output: initialOutput };
+
   const after = hooks['tool.execute.after']!;
   const out: any = { output: initialOutput };
-  await after({ tool, sessionID, callID: 'c', args: {} }, out);
+  await after(input, out);
   const output = typeof out.output === 'string' ? out.output : String(out.output ?? '');
-  const hasReminder = output.includes('[Tool Search Reminder]');
-  return { hasReminder, output };
+  return { blocked: false, hasReminder: output.includes('[Tool Search Reminder]'), output };
 }
 
 describe('AuthPersistence (Unit Tests)', () => {
@@ -87,9 +100,8 @@ describe('AuthPersistence (Unit Tests)', () => {
 
   it('returns empty maps if file does not exist', () => {
     const ap = new AuthPersistence({ filePath: testFilePath });
-    const { authorizations, lastSeen } = ap.load();
+    const authorizations = ap.load();
     expect(authorizations.size).toBe(0);
-    expect(lastSeen.size).toBe(0);
   });
 
   it('loads mixed legacy and strictly valid structured tools while dropping malformed records', () => {
@@ -111,24 +123,22 @@ describe('AuthPersistence (Unit Tests)', () => {
     };
     writeFileSync(testFilePath, JSON.stringify(initialData), 'utf-8');
 
-    const { authorizations } = new AuthPersistence({ filePath: testFilePath }).load();
-    expect(Array.from(authorizations.get('mixed-session')!)).toEqual(['ordinary_tool', validStructured]);
+    const authorizations = new AuthPersistence({ filePath: testFilePath }).load();
+    expect(Array.from(authorizations.get('mixed-session')!)).toEqual(['ordinary_tool', 'foo_ide']);
   });
 
   it('loads authorization without elapsed-time expiration or pruning', () => {
     const initialData = {
       'old-session': {
         tools: ['toolA', 'toolB'],
-        lastSeen: 1,
       },
     };
     writeFileSync(testFilePath, JSON.stringify(initialData), 'utf-8');
 
     const ap = new AuthPersistence({ filePath: testFilePath });
-    const { authorizations, lastSeen } = ap.load();
+    const authorizations = ap.load();
 
     expect(Array.from(authorizations.get('old-session')!)).toEqual(['toolA', 'toolB']);
-    expect(lastSeen.get('old-session')).toBe(1);
     expect(JSON.parse(readFileSync(testFilePath, 'utf-8'))).toEqual(initialData);
   });
 
@@ -137,10 +147,9 @@ describe('AuthPersistence (Unit Tests)', () => {
     const spyWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const ap = new AuthPersistence({ filePath: testFilePath });
-    const { authorizations, lastSeen } = ap.load();
+    const authorizations = ap.load();
 
     expect(authorizations.size).toBe(0);
-    expect(lastSeen.size).toBe(0);
     expect(spyWarn).toHaveBeenCalledWith(
       expect.stringContaining('[Tool Search] Warning: Failed to load authorization state from'),
       expect.any(Error),
@@ -153,20 +162,23 @@ describe('AuthPersistence (Unit Tests)', () => {
     const auths = new Map<string, Set<string>>([
       ['s1', new Set(['git_commit', 'read_file'])],
     ]);
-    const now = Date.now();
-    const lastSeen = new Map<string, number>([['s1', now]]);
 
-    ap.save(auths, lastSeen);
+    ap.save(auths);
     await ap.flush();
 
     expect(existsSync(testFilePath)).toBe(true);
     const content = JSON.parse(readFileSync(testFilePath, 'utf-8'));
-    expect(content).toEqual({
-      s1: {
-        tools: ['git_commit', 'read_file'],
-        lastSeen: now,
-      },
-    });
+    expect(content.s1).toMatchObject({ encoding: 'canonical-ids-v1', tools: ['git_commit', 'read_file'] });
+  });
+
+  it('round-trips foo_ide through save, load, and reload', async () => {
+    const first = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
+    first.save(new Map([['session', new Set(['foo_ide'])]]));
+    await first.flush();
+    const loaded = new AuthPersistence({ filePath: testFilePath }).load();
+    expect(Array.from(loaded.get('session') ?? [])).toEqual(['foo_ide']);
+    const reloaded = new AuthPersistence({ filePath: testFilePath }).load();
+    expect(Array.from(reloaded.get('session') ?? [])).toEqual(['foo_ide']);
   });
 
   it('fails open log warning on write error', async () => {
@@ -176,7 +188,7 @@ describe('AuthPersistence (Unit Tests)', () => {
 
     const spyWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const ap = new AuthPersistence({ filePath: invalidPath, debounceMs: 10 });
-    ap.save(new Map([['s1', new Set(['t1'])]]), new Map([['s1', Date.now()]]));
+    ap.save(new Map([['s1', new Set(['t1'])]]));
 
     await expect(ap.flush()).resolves.toBeUndefined();
     expect(spyWarn).toHaveBeenCalledWith(
@@ -189,103 +201,125 @@ describe('AuthPersistence (Unit Tests)', () => {
   it('merges sessions from multiple processes writing to the same file without data loss', async () => {
     const ap1 = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
     const ap2 = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
-    const tA = Date.now() - 1000;
-    const tB = Date.now();
 
     ap1.save(
       new Map([['sessionA', new Set(['toolA'])]]),
-      new Map([['sessionA', tA]]),
     );
     await ap1.flush();
 
     ap2.save(
       new Map([['sessionB', new Set(['toolB'])]]),
-      new Map([['sessionB', tB]]),
     );
     await ap2.flush();
 
     expect(existsSync(testFilePath)).toBe(true);
     const content = JSON.parse(readFileSync(testFilePath, 'utf-8'));
-    expect(content).toEqual({
-      sessionA: {
-        tools: ['toolA'],
-        lastSeen: tA,
-      },
-      sessionB: {
-        tools: ['toolB'],
-        lastSeen: tB,
-      },
-    });
+    expect(content.sessionA).toMatchObject({ encoding: 'canonical-ids-v1', tools: ['toolA'] });
+    expect(content.sessionB).toMatchObject({ encoding: 'canonical-ids-v1', tools: ['toolB'] });
   });
 
   it('respects explicit deletions during multi-process flushes', async () => {
     const ap1 = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
     const ap2 = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
-    const tA = Date.now() - 1000;
-    const tB = Date.now();
 
     ap1.save(
       new Map([['sessionA', new Set(['toolA'])]]),
-      new Map([['sessionA', tA]]),
     );
     await ap1.flush();
 
     ap2.save(
       new Map([['sessionB', new Set(['toolB'])]]),
-      new Map([['sessionB', tB]]),
     );
     await ap2.flush();
 
     // ap1 deletes sessionA
     ap1.deleteSession('sessionA');
-    ap1.save(new Map(), new Map());
+    ap1.save(new Map());
     await ap1.flush();
 
     const content = JSON.parse(readFileSync(testFilePath, 'utf-8'));
-    expect(content).toEqual({
-      sessionB: {
-        tools: ['toolB'],
-        lastSeen: tB,
-      },
-    });
+    expect(content.sessionA).toMatchObject({ deleted: true });
+    expect(content.sessionB).toMatchObject({ encoding: 'canonical-ids-v1', tools: ['toolB'] });
+  });
+
+  it('does not resurrect X when stale B dirties X before A creates and deletes X', async () => {
+    const a = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
+    const b = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
+    b.load();
+    b.save(new Map([['sessionX', new Set(['stale'])]]));
+    a.save(new Map([['sessionX', new Set(['fresh'])]]));
+    await a.flush();
+    a.deleteSession('sessionX');
+    a.save(new Map());
+    await a.flush();
+    await b.flush();
+    const content = JSON.parse(readFileSync(testFilePath, 'utf-8'));
+    expect(content.sessionX).toMatchObject({ deleted: true });
+  });
+
+  it('does not resurrect deleted X when a stale instance later saves unrelated Y', async () => {
+    const first = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
+    const stale = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
+    first.save(new Map([['sessionX', new Set(['toolX'])]]));
+    await first.flush();
+    stale.load();
+    first.deleteSession('sessionX');
+    first.save(new Map());
+    await first.flush();
+    stale.save(new Map([['sessionY', new Set(['toolY'])]]));
+    await stale.flush();
+    const content = JSON.parse(readFileSync(testFilePath, 'utf-8'));
+    expect(content.sessionX).toMatchObject({ deleted: true });
+    expect(content.sessionY.tools).toEqual(['toolY']);
+  });
+
+  it('fresh load after deletion can recreate X', async () => {
+    const a = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
+    a.save(new Map([['sessionX', new Set(['old'])]]));
+    await a.flush();
+    a.deleteSession('sessionX');
+    a.save(new Map());
+    await a.flush();
+    const fresh = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
+    const loaded = fresh.load();
+    expect(loaded.has('sessionX')).toBe(false);
+    fresh.save(new Map([['sessionX', new Set(['new'])]]));
+    await fresh.flush();
+    expect(new AuthPersistence({ filePath: testFilePath }).load().get('sessionX')).toEqual(new Set(['new']));
   });
 
   it('clears deletedSessions after flush so subsequent flushes do not re-delete sessions', async () => {
     const apA = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
     const apB = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
     const sessionX = 'sessionX';
-    const now = Date.now();
 
     // Initial setup: process A creates sessionX
     apA.save(
       new Map([[sessionX, new Set(['toolA'])]]),
-      new Map([[sessionX, now]]),
     );
     await apA.flush();
 
     // Process A deletes sessionX and flushes
     apA.deleteSession(sessionX);
-    apA.save(new Map(), new Map());
+    apA.save(new Map());
     await apA.flush();
 
-    // Process B re-authorizes sessionX and flushes
+    // A genuinely new authorization must observe the tombstone before recreating X.
+    apB.load();
     apB.save(
       new Map([[sessionX, new Set(['toolB'])]]),
-      new Map([[sessionX, now + 100]]),
     );
     await apB.flush();
 
     // Process A performs another save and flush (e.g. for some other session)
     apA.save(
       new Map([['sessionY', new Set(['toolY'])]]),
-      new Map([['sessionY', now + 200]]),
     );
     await apA.flush();
 
-    // The file MUST still contain sessionX because A's deletedSessions was cleared on its prior flush
+    // A truly new authorization after deletion is allowed to recreate sessionX.
     const content = JSON.parse(readFileSync(testFilePath, 'utf-8'));
-    expect(content[sessionX]).toBeDefined();
-    expect(content[sessionX].tools).toEqual(['toolB']);
+    expect(content[sessionX]).toMatchObject({ encoding: 'canonical-ids-v1', tools: ['toolB'] });
   });
 });
 
@@ -317,10 +351,7 @@ describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
 
   async function createPluginInstance(options: PluginOptions = {}) {
     const ctx = makeCtx();
-    const opts: PluginOptions = {
-      embedding: { enabled: false },
-      ...options,
-    };
+    const opts: PluginOptions = { ...options };
     const plugin = ToolSearchPlugin as Plugin;
     const hooks = await plugin(ctx, opts);
     const defHook = hooks['tool.definition']!;
@@ -365,9 +396,9 @@ describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
     const aOutput = await runAfterHook(instance2.hooks, 'github_create_issue', sessionA);
     expect(aOutput.hasReminder).toBe(false);
 
-    // Session B is not authorized in instance #2, so its after hook adds a reminder.
+    // Session B is not authorized in instance #2, so the before hook blocks it.
     const bOutput = await runAfterHook(instance2.hooks, 'github_create_issue', sessionB);
-    expect(bOutput.hasReminder).toBe(true);
+    expect(bOutput.blocked).toBe(true);
   });
 
   it('C) Compaction in instance #2 clears persisted auth; fresh plugin instance #3 requires re-search', async () => {
@@ -384,12 +415,12 @@ describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
     await compacting({ sessionID }, { context: [] } as any);
     await new Promise((r) => setTimeout(r, 100));
 
-    // Instance #2 permits execution; the after hook supplies the reminder.
-    expect((await runAfterHook(instance2.hooks, 'github_create_issue', sessionID)).hasReminder).toBe(true);
+    // Compaction revokes permission, so the before hook blocks execution.
+    expect((await runAfterHook(instance2.hooks, 'github_create_issue', sessionID)).blocked).toBe(true);
 
-    // Fresh plugin instance #3 also permits execution and requires a reminder.
+    // Fresh plugin instance #3 also blocks execution until re-authorized.
     const instance3 = await createPluginInstance();
-    expect((await runAfterHook(instance3.hooks, 'github_create_issue', sessionID)).hasReminder).toBe(true);
+    expect((await runAfterHook(instance3.hooks, 'github_create_issue', sessionID)).blocked).toBe(true);
   });
 
   it('D) Authorization survives simulated elapsed time across restarts', async () => {
@@ -397,7 +428,6 @@ describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
     const oldState = {
       [sessionID]: {
         tools: ['github_create_issue'],
-        lastSeen: Date.now() - (3 * 60 * 60 * 1000),
       },
     };
     mkdirSync(dirname(testFilePath), { recursive: true });
@@ -419,7 +449,7 @@ describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
     await instance.hooks.event!({ event: { type: 'session.deleted', properties: { sessionID, info: { id: sessionID } } } } as any);
     await new Promise((r) => setTimeout(r, 100));
     const fresh = await createPluginInstance();
-    expect((await runAfterHook(fresh.hooks, 'github_create_issue', sessionID)).hasReminder).toBe(true);
+    expect((await runAfterHook(fresh.hooks, 'github_create_issue', sessionID)).blocked).toBe(true);
   });
 
   it('E) Compress tool execution clears persisted auth across instances', async () => {
@@ -440,13 +470,14 @@ describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
      expect(compressOutput.output).toContain('[Tool Search] Deferred tool authorizations have been reset');
      await new Promise((r) => setTimeout(r, 100));
 
-    // Instance #2 permits execution; the after hook supplies the reminder.
-    const reminder2 = await runAfterHook(instance2.hooks, 'github_create_issue', sessionID);
-    expect(reminder2.hasReminder).toBe(true);
+    // Compress revokes permission, so the before hook blocks execution.
+     const reminder2 = await runAfterHook(instance2.hooks, 'github_create_issue', sessionID);
+     expect(reminder2.blocked).toBe(true);
 
-    // Fresh plugin instance #3 also requires a reminder because compress cleared persisted store
-    const instance3 = await createPluginInstance();
-    const reminder3 = await runAfterHook(instance3.hooks, 'github_create_issue', sessionID);
-    expect(reminder3.hasReminder).toBe(true);
+     // Fresh plugin instance #3 also blocks execution because compress cleared persisted state.
+     const instance3 = await createPluginInstance();
+     const reminder3 = await runAfterHook(instance3.hooks, 'github_create_issue', sessionID);
+     expect(reminder3.blocked).toBe(true);
+
   });
 });

@@ -6,6 +6,11 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import type { Hooks, Plugin, PluginInput } from '@opencode-ai/plugin';
 import { ToolSearchPlugin } from '../src/plugin.js';
 import { ToolVault } from '../src/vault.js';
+import { SemanticMatcher } from '../src/matcher.js';
+
+// This integration test validates plugin search output, not model loading.
+vi.spyOn(SemanticMatcher.prototype, 'index').mockResolvedValue(undefined);
+vi.spyOn(SemanticMatcher.prototype, 'locate').mockResolvedValue(new Map());
 
 const MCP_TOOLS = [
   {

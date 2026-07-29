@@ -147,7 +147,7 @@ describe('S5: Semantic search (when enabled)', () => {
 });
 
 describe('S6: Vault preserves full descriptions after defer', () => {
-  it('stored entry has full description, not [d]', () => {
+  it('stored entry has full description, not [deferred]', () => {
     const v = new ToolVault();
     v.add('test', 'This is the full original description', { type: 'object', properties: { x: { type: 'string', description: 'X param original' } } });
 

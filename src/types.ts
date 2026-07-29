@@ -4,11 +4,6 @@ export interface ToolMeta {
   parameters: unknown;
 }
 
-export interface ScoreParams {
-  k1: number;
-  b: number;
-}
-
 export interface Hit<T> {
   item: T;
   score: number;
@@ -17,16 +12,15 @@ export interface Hit<T> {
 export interface ToolSearchConfig {
   alwaysLoad?: string[];
   resetTools?: string[];
-  bm25?: Partial<ScoreParams>;
-  embedding?: {
-    enabled: boolean;
-    model?: string;
-    threshold?: number;
-  };
-  searchLimit?: number;
-  deferDescription?: string;
 }
 
+/** Internal lexical ranking parameters. Not part of the public plugin config. */
+export interface ScoreParams {
+  k1: number;
+  b: number;
+}
+
+/** Internal semantic search parameters. Not part of the public plugin config. */
 export interface EmbedConfig {
   enabled: boolean;
   model?: string;

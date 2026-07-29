@@ -12,4 +12,8 @@ dist/
 HOMEWORK-RESULT.md
 CLAUDE.md
 .slim/deepwork/
+# BEGIN oh-my-opencode-slim worktrees
+.slim/worktrees/
+.slim/worktrees.json
+# END oh-my-opencode-slim worktrees
 skills-lock.json
