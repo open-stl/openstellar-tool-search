@@ -1,3 +1,24 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { isMainThread, Worker } from 'node:worker_threads';
+const WORKER_SOURCE = `
+  const { parentPort } = require('node:worker_threads');
+  let extractor;
+  parentPort.on('message', async (message) => {
+    try {
+      if (!extractor) {
+        const transformers = await import('@xenova/transformers');
+        extractor = await transformers.pipeline('feature-extraction', message.model, message.pipelineOptions);
+      }
+      const output = await extractor(message.texts, message.options);
+      const data = output.data;
+      parentPort.postMessage({ id: message.id, data, dims: output.dims }, [data.buffer]);
+    } catch (error) {
+      parentPort.postMessage({ id: message.id, error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+`;
 import type { EmbedConfig } from './types.js';
 
 type ModelPipeline = (text: string | string[], opts: {
@@ -16,8 +37,40 @@ export class SemanticMatcher {
   private dims = 384;
   private loadError: Error | null = null;
   private loadPromise: Promise<void> | null = null;
+  private worker: Worker | null = null;
+  private workerRequests = new Map<number, { resolve: (value: { data: Float32Array; dims?: number[] }) => void; reject: (error: Error) => void }>();
+  private workerSequence = 0;
 
   constructor(private cfg: EmbedConfig) {}
+
+  get isWorkerEnabled(): boolean {
+    return Boolean(this.cfg.useWorker);
+  }
+
+  get isCacheEnabled(): boolean {
+    return Boolean(this.cfg.cache || this.cfg.cacheDir !== undefined);
+  }
+
+  private computeHash(entries: IndexedEntry[]): string {
+    const name = this.cfg.model ?? 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
+    const hasher = crypto.createHash('sha256');
+    hasher.update(name);
+    if (this.cfg.quantized !== undefined) hasher.update(`:q=${this.cfg.quantized}`);
+    if (this.cfg.dtype !== undefined) hasher.update(`:dtype=${this.cfg.dtype}`);
+    for (const e of entries) {
+      hasher.update(`:${e.id}:${e.text}`);
+    }
+    return hasher.digest('hex');
+  }
+
+  private getCacheFilePath(hash: string): string {
+    if (this.cfg.cacheDir) {
+      return this.cfg.cacheDir.endsWith('.json')
+        ? this.cfg.cacheDir
+        : path.join(this.cfg.cacheDir, `vectors-${hash}.json`);
+    }
+    return path.join('.cache', `vectors-${hash}.json`);
+  }
 
   private normalize(vec: Float32Array): Float32Array {
     let sum = 0;
@@ -52,7 +105,12 @@ export class SemanticMatcher {
     try {
       const mod = await import('@xenova/transformers');
       const name = this.cfg.model ?? 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
-      this.model = (await mod.pipeline('feature-extraction', name)) as unknown as ModelPipeline;
+      const pipelineOpts: Record<string, unknown> = {};
+      if (this.cfg.quantized !== undefined) pipelineOpts.quantized = this.cfg.quantized;
+      if (this.cfg.dtype !== undefined) pipelineOpts.dtype = this.cfg.dtype;
+
+      const opts = Object.keys(pipelineOpts).length > 0 ? pipelineOpts : undefined;
+      this.model = (await mod.pipeline('feature-extraction', name, opts)) as unknown as ModelPipeline;
     } catch (e) {
       this.loadError = e as Error;
       this.loadPromise = null;
@@ -71,7 +129,66 @@ export class SemanticMatcher {
     return this.vectors.size;
   }
 
+  private async runInference(
+    texts: string | string[],
+    opts: { pooling: string; normalize: boolean },
+  ): Promise<{ data: Float32Array; dims?: number[] }> {
+    if (!this.model) throw new Error('Model pipeline not initialized');
+    if (!this.cfg.useWorker || !isMainThread) return this.model(texts, opts);
+
+    if (!this.worker) {
+      this.worker = new Worker(WORKER_SOURCE, { eval: true });
+      this.worker.on('message', (message: { id: number; data?: Float32Array; dims?: number[]; error?: string }) => {
+        const request = this.workerRequests.get(message.id);
+        if (!request) return;
+        this.workerRequests.delete(message.id);
+        if (message.error || !message.data) request.reject(new Error(message.error ?? 'Worker inference failed'));
+        else request.resolve({ data: message.data, dims: message.dims });
+      });
+      this.worker.on('error', (error) => {
+        for (const request of this.workerRequests.values()) request.reject(error instanceof Error ? error : new Error(String(error)));
+        this.workerRequests.clear();
+      });
+    }
+
+    const id = ++this.workerSequence;
+    return new Promise((resolve, reject) => {
+      this.workerRequests.set(id, { resolve, reject });
+      this.worker!.postMessage({
+        id,
+        model: this.cfg.model ?? 'Xenova/paraphrase-multilingual-MiniLM-L12-v2',
+        pipelineOptions: {
+          ...(this.cfg.quantized === undefined ? {} : { quantized: this.cfg.quantized }),
+          ...(this.cfg.dtype === undefined ? {} : { dtype: this.cfg.dtype }),
+        },
+        texts,
+        options: opts,
+      });
+    });
+  }
+
   async index(entries: IndexedEntry[]): Promise<void> {
+    const isCacheEnabled = this.cfg.cache ?? (this.cfg.cacheDir !== undefined);
+    let cacheFilePath = '';
+
+    if (isCacheEnabled && entries.length > 0) {
+      const hash = this.computeHash(entries);
+      cacheFilePath = this.getCacheFilePath(hash);
+      if (fs.existsSync(cacheFilePath)) {
+        try {
+          const content = fs.readFileSync(cacheFilePath, 'utf-8');
+          const parsed = JSON.parse(content) as Record<string, number[]>;
+          this.vectors.clear();
+          for (const [id, vecArray] of Object.entries(parsed)) {
+            this.vectors.set(id, this.normalize(new Float32Array(vecArray)));
+          }
+          return; // Skip ONNX this.model() inference entirely on cache hit!
+        } catch {
+          // Fall through on cache parse error
+        }
+      }
+    }
+
     await this.open();
     if (!this.model) return; // model failed to load — skip semantic, caller falls back to BM25
     this.vectors.clear();
@@ -88,35 +205,48 @@ export class SemanticMatcher {
       }
     }
 
-    if (validEntries.length === 0) return;
+    if (validEntries.length > 0) {
+      const BATCH_SIZE = 32;
+      for (let i = 0; i < validEntries.length; i += BATCH_SIZE) {
+        const chunk = validEntries.slice(i, i + BATCH_SIZE);
+        const texts = chunk.map((c) => c.text);
 
-    const BATCH_SIZE = 32;
-    for (let i = 0; i < validEntries.length; i += BATCH_SIZE) {
-      const chunk = validEntries.slice(i, i + BATCH_SIZE);
-      const texts = chunk.map((c) => c.text);
+        try {
+          const out = await this.runInference(texts, { pooling: 'mean', normalize: true });
+          const data = out.data;
+          const count = chunk.length;
+          const d = (out.dims && out.dims.length >= 2)
+            ? out.dims[out.dims.length - 1]
+            : Math.floor(data.length / count);
 
-      try {
-        const out = await this.model(texts, { pooling: 'mean', normalize: true });
-        const data = out.data;
-        const count = chunk.length;
-        const d = (out.dims && out.dims.length >= 2)
-          ? out.dims[out.dims.length - 1]
-          : Math.floor(data.length / count);
-
-        for (let k = 0; k < count; k++) {
-          const rawVec = data.subarray(k * d, (k + 1) * d);
-          this.vectors.set(chunk[k].id, this.normalize(rawVec));
-        }
-      } catch (err) {
-        for (const item of chunk) {
-          try {
-            const out = await this.model(item.text, { pooling: 'mean', normalize: true });
-            this.vectors.set(item.id, this.normalize(out.data));
-          } catch {
-            this.vectors.set(item.id, new Float32Array(this.dims));
+          for (let k = 0; k < count; k++) {
+            const rawVec = data.subarray(k * d, (k + 1) * d);
+            this.vectors.set(chunk[k].id, this.normalize(rawVec));
+          }
+        } catch (err) {
+          for (const item of chunk) {
+            try {
+              const out = await this.runInference(item.text, { pooling: 'mean', normalize: true });
+              this.vectors.set(item.id, this.normalize(out.data));
+            } catch {
+              this.vectors.set(item.id, new Float32Array(this.dims));
+            }
           }
         }
       }
+    }
+
+    if (isCacheEnabled && cacheFilePath) {
+      const obj: Record<string, number[]> = {};
+      for (const [id, vec] of this.vectors.entries()) {
+        obj[id] = Array.from(vec);
+      }
+      const dir = path.dirname(cacheFilePath);
+      fs.promises.mkdir(dir, { recursive: true })
+        .then(() => fs.promises.writeFile(cacheFilePath, JSON.stringify(obj), 'utf-8'))
+        .catch((err) => {
+          console.warn('[tool-search] Vector disk cache save failed:', err);
+        });
     }
   }
 
@@ -126,7 +256,7 @@ export class SemanticMatcher {
     if (!this.model) return new Map();
 
     const q = text.toLowerCase().trim();
-    const qv = this.normalize((await this.model!(q, { pooling: 'mean', normalize: true })).data);
+    const qv = this.normalize((await this.runInference(q, { pooling: 'mean', normalize: true })).data);
     const baseThreshold = this.cfg.threshold ?? 0.3;
 
     const sweep = (minScore: number): Map<string, number> => {

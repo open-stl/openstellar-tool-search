@@ -23,6 +23,11 @@ export interface ToolSearchConfig {
     enabled: boolean;
     model?: string;
     threshold?: number;
+    quantized?: boolean;
+    dtype?: string;
+    cacheDir?: string;
+    cache?: boolean;
+    useWorker?: boolean;
   };
   searchLimit?: number;
   deferDescription?: string;
@@ -32,4 +37,9 @@ export interface EmbedConfig {
   enabled: boolean;
   model?: string;
   threshold?: number;
+  quantized?: boolean;
+  dtype?: string;
+  cacheDir?: string;
+  cache?: boolean;
+  useWorker?: boolean;
 }
