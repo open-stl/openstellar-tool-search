@@ -153,4 +153,33 @@ describe('ToolVault', () => {
     await v.query('file', 5);
     expect(index).toHaveBeenCalledTimes(2);
   });
+
+  it('skips semantic search when BM25 returns high confidence match (fast-path cascade)', async () => {
+    const locate = vi.spyOn(SemanticMatcher.prototype, 'locate');
+    const index = vi.spyOn(SemanticMatcher.prototype, 'index').mockResolvedValue(undefined);
+    const v = new ToolVault({ embedding: { enabled: true }, cascadeThreshold: 1.0 });
+    v.add('git_commit', 'Creates a commit in git', {});
+    v.add('git_push', 'Pushes commits to git remote', {});
+
+    const res = await v.query('git commit', 5);
+    expect(res[0].id).toBe('git_commit');
+    expect(locate).not.toHaveBeenCalled();
+    expect(index).not.toHaveBeenCalled();
+  });
+
+  it('fuses BM25 and semantic scores using RRF when BM25 score is below threshold', async () => {
+    vi.spyOn(SemanticMatcher.prototype, 'index').mockResolvedValue(undefined);
+    vi.spyOn(SemanticMatcher.prototype, 'locate').mockResolvedValue(
+      new Map([
+        ['read_file', 0.95],
+        ['git_commit', 0.10],
+      ])
+    );
+    const v = new ToolVault({ embedding: { enabled: true }, cascadeThreshold: 10.0 });
+    v.add('git_commit', 'Creates a commit in git', {});
+    v.add('read_file', 'Reads file contents from disk', {});
+
+    const res = await v.query('file', 5);
+    expect(res[0].id).toBe('read_file');
+  });
 });

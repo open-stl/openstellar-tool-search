@@ -7,6 +7,7 @@ export interface ToolMeta {
 export interface ScoreParams {
   k1: number;
   b: number;
+  cascadeThreshold?: number;
 }
 
 export interface Hit<T> {

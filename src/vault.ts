@@ -28,9 +28,11 @@ export class ToolVault {
   private semanticGeneration = 0;
   private semanticBuildPromise: Promise<void> | undefined;
   private scorerCfg: { k1: number; b: number };
+  private cascadeThreshold: number;
 
   constructor(cfg: Partial<ScoreParams & { embedding?: EmbedConfig }> = {}) {
     this.scorerCfg = { k1: cfg.k1 ?? 0.9, b: cfg.b ?? 0.4 };
+    this.cascadeThreshold = cfg.cascadeThreshold ?? 4.5;
     this.scorer = new RankEngine<ToolMeta>(this.scorerCfg.k1, this.scorerCfg.b);
     if (cfg.embedding?.enabled) this.semantic = new SemanticMatcher(cfg.embedding);
   }
@@ -78,19 +80,49 @@ export class ToolVault {
   }
 
   async query(text: string, limit: number): Promise<ToolMeta[]> {
-    if (this.semantic) {
-      try {
-        await this.buildSemantic();
-        if (this.semanticStale) await this.buildSemantic();
-        const scores = await this.semantic.locate(text);
-        if (scores.size > 0) return Array.from(scores.entries())
-          .sort((a, b) => b[1] - a[1]).slice(0, limit)
-          .map(([id]) => this.store.get(id)).filter((item): item is ToolMeta => Boolean(item));
-      } catch (err) {
-        console.warn('[tool-search] Embedding search failed, falling back to BM25:', err);
-      }
+    // 1. BM25 fast-path — always run first (sub-ms).
+    const bm25Hits = this.queryBM25(text, limit);
+
+    // 2. If no semantic matcher, return BM25 directly.
+    if (!this.semantic) return bm25Hits;
+
+    // 3. Cascade gate: if BM25 top score exceeds the threshold, skip semantic inference.
+    const topScore = bm25Hits.length > 0
+      ? (this.scorer.query(text, 1)[0]?.score ?? 0)
+      : 0;
+    if (topScore >= this.cascadeThreshold) return bm25Hits;
+
+    // 4. Semantic fallback with RRF fusion.
+    try {
+      await this.buildSemantic();
+      if (this.semanticStale) await this.buildSemantic();
+      const semanticScores = await this.semantic.locate(text);
+      if (semanticScores.size > 0) return this.fuseRRF(bm25Hits, semanticScores, limit);
+    } catch (err) {
+      console.warn('[tool-search] Embedding search failed, falling back to BM25:', err);
     }
-    return this.queryBM25(text, limit);
+    return bm25Hits;
+  }
+
+  private fuseRRF(
+    bm25Hits: ToolMeta[],
+    semanticScores: Map<string, number>,
+    limit: number,
+    k = 60,
+  ): ToolMeta[] {
+    const scoreMap = new Map<string, number>();
+    bm25Hits.forEach((hit, rank) => {
+      scoreMap.set(hit.id, (scoreMap.get(hit.id) ?? 0) + 1 / (k + rank + 1));
+    });
+    const sortedSemantic = Array.from(semanticScores.entries()).sort((a, b) => b[1] - a[1]);
+    sortedSemantic.forEach(([id], rank) => {
+      scoreMap.set(id, (scoreMap.get(id) ?? 0) + 1 / (k + rank + 1));
+    });
+    return Array.from(scoreMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([id]) => this.store.get(id))
+      .filter((item): item is ToolMeta => Boolean(item));
   }
 
   queryBM25(text: string, limit: number): ToolMeta[] {
