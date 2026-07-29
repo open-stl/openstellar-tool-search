@@ -2,29 +2,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isMainThread, Worker } from 'node:worker_threads';
-const WORKER_SOURCE = `
-  const { parentPort } = require('node:worker_threads');
-  let extractor;
-  parentPort.on('message', async (message) => {
-    try {
-      if (!extractor) {
-        const transformers = await import('@xenova/transformers');
-        extractor = await transformers.pipeline('feature-extraction', message.model, message.pipelineOptions);
-      }
-      const output = await extractor(message.texts, message.options);
-      const data = output.data;
-      parentPort.postMessage({ id: message.id, data, dims: output.dims }, [data.buffer]);
-    } catch (error) {
-      parentPort.postMessage({ id: message.id, error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-`;
 import type { EmbedConfig } from './types.js';
 
-type ModelPipeline = (text: string | string[], opts: {
-  pooling: string;
-  normalize: boolean;
-}) => Promise<{ data: Float32Array; dims?: number[] }>;
+type InferenceOpts = { pooling: string; normalize: boolean };
+
+type ModelPipeline = (text: string | string[], opts: InferenceOpts) => Promise<{ data: Float32Array; dims?: number[] }>;
 
 export interface IndexedEntry {
   id: string;
@@ -131,13 +113,16 @@ export class SemanticMatcher {
 
   private async runInference(
     texts: string | string[],
-    opts: { pooling: string; normalize: boolean },
+    opts: InferenceOpts,
   ): Promise<{ data: Float32Array; dims?: number[] }> {
     if (!this.model) throw new Error('Model pipeline not initialized');
-    if (!this.cfg.useWorker || !isMainThread) return this.model(texts, opts);
+    if (!this.isWorkerEnabled || !isMainThread) return this.model(texts, opts);
+
+    const workerUrl = new URL('./matcher.worker.js', import.meta.url);
+    if (!fs.existsSync(workerUrl)) return this.model(texts, opts);
 
     if (!this.worker) {
-      this.worker = new Worker(WORKER_SOURCE, { eval: true });
+      this.worker = new Worker(workerUrl);
       this.worker.on('message', (message: { id: number; data?: Float32Array; dims?: number[]; error?: string }) => {
         const request = this.workerRequests.get(message.id);
         if (!request) return;
@@ -152,7 +137,7 @@ export class SemanticMatcher {
     }
 
     const id = ++this.workerSequence;
-    return new Promise((resolve, reject) => {
+    return new Promise<{ data: Float32Array; dims?: number[] }>((resolve, reject) => {
       this.workerRequests.set(id, { resolve, reject });
       this.worker!.postMessage({
         id,
@@ -164,14 +149,18 @@ export class SemanticMatcher {
         texts,
         options: opts,
       });
+    }).catch((error: unknown) => {
+      this.worker?.terminate();
+      this.worker = null;
+      if (this.model) return this.model(texts, opts);
+      throw error;
     });
   }
 
   async index(entries: IndexedEntry[]): Promise<void> {
-    const isCacheEnabled = this.cfg.cache ?? (this.cfg.cacheDir !== undefined);
     let cacheFilePath = '';
 
-    if (isCacheEnabled && entries.length > 0) {
+    if (this.isCacheEnabled && entries.length > 0) {
       const hash = this.computeHash(entries);
       cacheFilePath = this.getCacheFilePath(hash);
       if (fs.existsSync(cacheFilePath)) {
@@ -236,7 +225,7 @@ export class SemanticMatcher {
       }
     }
 
-    if (isCacheEnabled && cacheFilePath) {
+    if (this.isCacheEnabled && cacheFilePath) {
       const obj: Record<string, number[]> = {};
       for (const [id, vec] of this.vectors.entries()) {
         obj[id] = Array.from(vec);
