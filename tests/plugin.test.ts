@@ -282,9 +282,13 @@ describe('ToolSearchPlugin', () => {
     await hooks['tool.definition']!({ toolID: 'policy_tool' }, { description: 'Policy tool', parameters: {} });
     const output = { system: [] as string[] };
     await hooks['experimental.chat.system.transform']!({ sessionID: 'policy-session' } as any, output as any);
-    expect(output.system.join('\\n')).toContain('canonical tool ID');
-    expect(output.system.join('\\n')).toContain('which must be used for execution');
-    expect(output.system.join('\\n')).not.toContain('alias');
+    const text = output.system.join('\n');
+    expect(text).toContain('canonical tool ID');
+    expect(text).toContain('which must be used for execution');
+    expect(text).not.toContain('alias');
+    // When the tool ID is already known, AI should use tool_search_regex for a reliable exact match.
+    expect(text).toContain('tool_search_regex');
+    expect(text).toMatch(/known.*tool.*ID|tool.*ID.*known/i);
   });
 
   it('does not authorize a real tool after searching another canonical tool', async () => {
