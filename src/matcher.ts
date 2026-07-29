@@ -6,6 +6,8 @@ import type { EmbedConfig } from './types.js';
 
 type InferenceOpts = { pooling: string; normalize: boolean };
 
+const DEFAULT_MODEL = 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
+
 type ModelPipeline = (text: string | string[], opts: InferenceOpts) => Promise<{ data: Float32Array; dims?: number[] }>;
 
 export interface IndexedEntry {
@@ -38,7 +40,7 @@ export class SemanticMatcher {
   }
 
   private computeHash(entries: IndexedEntry[]): string {
-    const name = this.cfg.model ?? 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
+    const name = this.cfg.model ?? DEFAULT_MODEL;
     const hasher = crypto.createHash('sha256');
     hasher.update(name);
     if (this.cfg.quantized !== undefined) hasher.update(`:q=${this.cfg.quantized}`);
@@ -90,7 +92,7 @@ export class SemanticMatcher {
   private async doLoad(): Promise<void> {
     try {
       const mod = await import('@xenova/transformers');
-      const name = this.cfg.model ?? 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
+      const name = this.cfg.model ?? DEFAULT_MODEL;
       const pipelineOpts: Record<string, unknown> = {};
       if (this.cfg.quantized !== undefined) pipelineOpts.quantized = this.cfg.quantized;
       if (this.cfg.dtype !== undefined) pipelineOpts.dtype = this.cfg.dtype;
@@ -152,7 +154,7 @@ export class SemanticMatcher {
       this.workerRequests.set(id, { resolve, reject });
       this.worker!.postMessage({
         id,
-        model: this.cfg.model ?? 'Xenova/paraphrase-multilingual-MiniLM-L12-v2',
+        model: this.cfg.model ?? DEFAULT_MODEL,
         pipelineOptions: {
           ...(this.cfg.quantized === undefined ? {} : { quantized: this.cfg.quantized }),
           ...(this.cfg.dtype === undefined ? {} : { dtype: this.cfg.dtype }),
