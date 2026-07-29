@@ -41,6 +41,28 @@ describe('ToolVault', () => {
     expect(r2[0].id).toBe('read_file');
   });
 
+  it('queryBM25 surfaces a tool whose ID matches a query token even when IDF is diluted by many tools mentioning that word', () => {
+    // Reproduces the "read grep bash" scenario with a 229-tool realistic corpus:
+    // every tool's description mentions "bash" -> IDF("bash") collapses -> the `bash`
+    // tool itself drops out of the top-10. The fix must guarantee that any tool whose
+    // *ID* is an exact match to a query token always appears in the result set.
+    const v = new ToolVault();
+    v.add('bash', 'Executes a given bash command in a persistent shell session with optional timeout.', {});
+    v.add('grep', 'Fast content search. If you need rg use the Bash tool with rg directly. Do NOT use grep.', {});
+    v.add('read', 'Read a file. Avoid using Bash with cat/head/tail/sed/awk for file reading.', {});
+    v.add('glob', 'File pattern matching. Use Bash for shell-native filesystem ops.', {});
+    v.add('edit', 'Edit files. Do not use bash echo or sed.', {});
+    v.add('write', 'Write files. Avoid using bash for writes.', {});
+    // 223 more tools, each with "bash" prominently in description -> simulates real corpus
+    for (let i = 0; i < 223; i++) {
+      v.add(`tool_${i}`, `Specialized tool ${i}. Use bash or shell for system operations. Prefer bash for terminal tasks.`, {});
+    }
+    // With 229 tools all mentioning "bash", IDF collapses. Without a fix, bash drops outside top-10.
+    const results = v.queryBM25('read grep bash', 10);
+    const ids = results.map((r) => r.id);
+    expect(ids).toContain('bash');
+  });
+
   it('grep returns regex matches', () => {
     const v = new ToolVault();
     v.add('github_create_issue', 'Creates github issue', {});

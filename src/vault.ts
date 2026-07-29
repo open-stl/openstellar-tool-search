@@ -127,7 +127,19 @@ export class ToolVault {
 
   queryBM25(text: string, limit: number): ToolMeta[] {
     this.buildScorer();
-    return this.scorer.query(text, limit).map((r) => r.item);
+    const bm25 = this.scorer.query(text, limit).map((r) => r.item);
+    // ID-exact-match boost: for each whitespace-separated token in the query,
+    // if its lowercase form exactly matches a tool ID, ensure that tool appears
+    // in the result set regardless of its BM25 score (IDF collapse on common words).
+    const tokens = text.toLowerCase().split(/\s+/).filter(Boolean);
+    const seen = new Set(bm25.map((t) => t.id));
+    const injected: ToolMeta[] = [];
+    for (const token of tokens) {
+      const match = this.store.get(token);
+      if (match && !seen.has(match.id)) { injected.push(match); seen.add(match.id); }
+    }
+    if (injected.length === 0) return bm25;
+    return [...injected, ...bm25].slice(0, limit);
   }
 
   grep(pattern: string, limit: number): ToolMeta[] {
