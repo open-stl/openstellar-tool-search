@@ -7,7 +7,7 @@ import { AuthPersistence } from './auth-persistence.js';
 import type { PersistedToolAuthorization } from './auth-persistence.js';
 
 const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
-const DEFAULT_DEFER = '[d]';
+const DEFAULT_DEFER = '[deferred]';
 
 function getFirstSentence(desc: string): string {
   if (!desc) return '';

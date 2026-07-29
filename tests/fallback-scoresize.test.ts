@@ -43,16 +43,16 @@ describe('B5: scores.size === 0 → BM25 fallback', () => {
     spy.mockRestore();
   });
 
-  it('[d] regex blindspot: deferred tools have description "[d]" which matches many regexes', async () => {
-    // When tools are deferred via the plugin, vault stores e.description = '[d]'
+  it('[deferred] regex blindspot: deferred tools have description "[deferred]" which matches many regexes', async () => {
+    // When tools are deferred via the plugin, vault stores e.description = '[deferred]'
     // vault.grep() does: re.test(e.id) || re.test(e.description)
     // A pattern like `d` will match every deferred tool's description, even unrelated ones
     const v = new ToolVault();
-    v.add('github_create_issue', '[d]', { type: 'object', properties: {} });
-    v.add('figma_create_shape', '[d]', { type: 'object', properties: {} });
-    v.add('read_file', '[d]', { type: 'object', properties: {} });
+    v.add('github_create_issue', '[deferred]', { type: 'object', properties: {} });
+    v.add('figma_create_shape', '[deferred]', { type: 'object', properties: {} });
+    v.add('read_file', '[deferred]', { type: 'object', properties: {} });
 
-    // Pattern `d` (single char) — matches every "[d]" description (substring match)
+    // Pattern `d` (single char) — matches every "[deferred]" description (substring match)
     const r1 = v.grep('d', 10);
     expect(r1.length).toBe(3);  // CONFIRMS the blindspot: unrelated deferred tools all match
 
@@ -60,8 +60,8 @@ describe('B5: scores.size === 0 → BM25 fallback', () => {
     const r2 = v.grep('^x$', 10);
     expect(r2.length).toBe(0);
 
-    // Pattern `\[d\]` — exactly matches the literal "[d]" (3 chars including brackets)
-    const r3 = v.grep('\\[d\\]', 10);
-    expect(r3.length).toBe(3);  // all deferred tools have exactly "[d]" in their description
+    // Pattern `\[deferred\]` — exactly matches the literal "[deferred]"
+    const r3 = v.grep('\\[deferred\\]', 10);
+    expect(r3.length).toBe(3);  // all deferred tools have exactly "[deferred]" in their description
   });
 });
