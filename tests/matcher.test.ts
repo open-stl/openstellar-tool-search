@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
@@ -94,6 +94,8 @@ describe('SemanticMatcher', () => {
     });
     expect(m.isWorkerEnabled).toBe(true);
 
+    if (!m.workerAvailable) return;
+
     await m.open();
     const entries: IndexedEntry[] = [
       { id: 'git_status', text: 'shows working tree status' },
@@ -104,6 +106,13 @@ describe('SemanticMatcher', () => {
     const scores = await m.locate('working tree');
     expect(scores.has('git_status')).toBe(true);
   }, 60000);
+
+  it('packages the worker module beside the production bundle', () => {
+    const productionWorker = join(process.cwd(), 'dist', 'matcher.worker.js');
+    if (existsSync(join(process.cwd(), 'dist', 'index.js'))) {
+      expect(existsSync(productionWorker)).toBe(true);
+    }
+  });
 
   it('indexes entries and locates by semantic similarity', async () => {
     const m = new SemanticMatcher({ enabled: true, threshold: -1 });

@@ -33,6 +33,10 @@ export class SemanticMatcher {
     return Boolean(this.cfg.cache || this.cfg.cacheDir !== undefined);
   }
 
+  get workerAvailable(): boolean {
+    return fs.existsSync(new URL('./matcher.worker.js', import.meta.url));
+  }
+
   private computeHash(entries: IndexedEntry[]): string {
     const name = this.cfg.model ?? 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
     const hasher = crypto.createHash('sha256');
@@ -119,7 +123,7 @@ export class SemanticMatcher {
     if (!this.isWorkerEnabled || !isMainThread) return this.model(texts, opts);
 
     const workerUrl = new URL('./matcher.worker.js', import.meta.url);
-    if (!fs.existsSync(workerUrl)) return this.model(texts, opts);
+    if (!this.workerAvailable) throw new Error('Embedding worker module is unavailable');
 
     if (!this.worker) {
       this.worker = new Worker(workerUrl);
@@ -130,9 +134,16 @@ export class SemanticMatcher {
         if (message.error || !message.data) request.reject(new Error(message.error ?? 'Worker inference failed'));
         else request.resolve({ data: message.data, dims: message.dims });
       });
-      this.worker.on('error', (error) => {
-        for (const request of this.workerRequests.values()) request.reject(error instanceof Error ? error : new Error(String(error)));
+      const rejectWorkerRequests = (error: Error): void => {
+        for (const request of this.workerRequests.values()) request.reject(error);
         this.workerRequests.clear();
+        this.worker = null;
+      };
+      this.worker.on('error', (error) => {
+        rejectWorkerRequests(error instanceof Error ? error : new Error(String(error)));
+      });
+      this.worker.on('exit', (code) => {
+        if (this.worker) rejectWorkerRequests(new Error(`Embedding worker exited with code ${code}`));
       });
     }
 
