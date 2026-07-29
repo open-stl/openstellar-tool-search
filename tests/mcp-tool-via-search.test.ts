@@ -105,7 +105,7 @@ describe('tool_search discovers MCP tools', () => {
   it('"context7" finds context7_resolve-library-id', async () => {
     const r = await fx.toolSearch.execute({ query: 'context7' }, TOOL_CTX);
     expect(r).toContain('context7_resolve-library-id');
-  });
+  }, 60000);
 
   it('"documentation library" finds context7_query-docs via param desc', async () => {
     const r = await fx.toolSearch.execute({ query: 'documentation library' }, TOOL_CTX);

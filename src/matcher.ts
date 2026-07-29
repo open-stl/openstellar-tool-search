@@ -1,9 +1,9 @@
 import type { EmbedConfig } from './types.js';
 
-type ModelPipeline = (text: string, opts: {
+type ModelPipeline = (text: string | string[], opts: {
   pooling: string;
   normalize: boolean;
-}) => Promise<{ data: Float32Array }>;
+}) => Promise<{ data: Float32Array; dims?: number[] }>;
 
 export interface IndexedEntry {
   id: string;
@@ -75,17 +75,47 @@ export class SemanticMatcher {
     await this.open();
     if (!this.model) return; // model failed to load — skip semantic, caller falls back to BM25
     this.vectors.clear();
+
+    if (entries.length === 0) return;
+
+    const validEntries: { id: string; text: string }[] = [];
     for (const e of entries) {
       const txt = e.text.toLowerCase().trim();
       if (!txt) {
         this.vectors.set(e.id, new Float32Array(this.dims));
-        continue;
+      } else {
+        validEntries.push({ id: e.id, text: txt });
       }
+    }
+
+    if (validEntries.length === 0) return;
+
+    const BATCH_SIZE = 32;
+    for (let i = 0; i < validEntries.length; i += BATCH_SIZE) {
+      const chunk = validEntries.slice(i, i + BATCH_SIZE);
+      const texts = chunk.map((c) => c.text);
+
       try {
-        const out = await this.model(txt, { pooling: 'mean', normalize: true });
-        this.vectors.set(e.id, this.normalize(out.data));
+        const out = await this.model(texts, { pooling: 'mean', normalize: true });
+        const data = out.data;
+        const count = chunk.length;
+        const d = (out.dims && out.dims.length >= 2)
+          ? out.dims[out.dims.length - 1]
+          : Math.floor(data.length / count);
+
+        for (let k = 0; k < count; k++) {
+          const rawVec = data.subarray(k * d, (k + 1) * d);
+          this.vectors.set(chunk[k].id, this.normalize(rawVec));
+        }
       } catch (err) {
-        this.vectors.set(e.id, new Float32Array(this.dims));
+        for (const item of chunk) {
+          try {
+            const out = await this.model(item.text, { pooling: 'mean', normalize: true });
+            this.vectors.set(item.id, this.normalize(out.data));
+          } catch {
+            this.vectors.set(item.id, new Float32Array(this.dims));
+          }
+        }
       }
     }
   }

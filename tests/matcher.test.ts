@@ -81,4 +81,22 @@ describe('SemanticMatcher', () => {
     const scores = await m.locate('quantum physics string theory');
     expect(scores.size).toBe(0);
   }, 60000);
+
+  it('indexes multiple entries in a single batch correctly', async () => {
+    const m = new SemanticMatcher({ enabled: true, threshold: 0.3 });
+    await m.open();
+
+    const entries: IndexedEntry[] = [
+      { id: 'tool_1', text: 'creates a new file in the directory' },
+      { id: 'tool_2', text: 'deletes a file permanently from disk' },
+      { id: 'tool_3', text: 'edits text content within a file' },
+      { id: 'tool_4', text: 'empty description tool', },
+      { id: 'tool_5', text: '' },
+    ];
+    await m.index(entries);
+
+    expect(m.entryCount).toBe(5);
+    const scores = await m.locate('create file');
+    expect(scores.has('tool_1')).toBe(true);
+  }, 60000);
 });
