@@ -65,10 +65,19 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
   const loaded = persistence.load();
   const authorizations = loaded.authorizations;
   const lastSeen = loaded.lastSeen;
+  let authorizationsSanitized = false;
   for (const set of authorizations.values()) {
-    for (const value of set) if (authorizationId(value) === undefined) set.delete(value);
+    for (const value of set) {
+      const id = authorizationId(value);
+      if (id === undefined || id === 'skill') {
+        set.delete(value);
+        authorizationsSanitized = true;
+      }
+    }
   }
+  if (authorizationsSanitized) persistence.save(authorizations, lastSeen);
   const deferredTools = new Set<string>();
+  const skillPermits = new Set<string>();
   let deferrals = 0;
   let total = 0;
   let alerted = false;
@@ -77,9 +86,20 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
 
   const authorize = (sessionID: string | undefined, hits: ToolMeta[]) => {
     if (!sessionID) return;
+    const genericHits = hits.filter((hit) => hit.id !== 'skill');
+    if (genericHits.length === 0) return;
     let set = authorizations.get(sessionID);
     if (!set) { set = new Set(); authorizations.set(sessionID, set); }
-    for (const hit of hits) set.add(canonicalAuthorization(hit.id));
+    for (const hit of genericHits) set.add(canonicalAuthorization(hit.id));
+    persistence.save(authorizations, lastSeen);
+  };
+
+  const clearSessionState = (sessionID: string | undefined) => {
+    if (!sessionID) return;
+    authorizations.delete(sessionID);
+    lastSeen.delete(sessionID);
+    skillPermits.delete(sessionID);
+    persistence.deleteSession(sessionID);
     persistence.save(authorizations, lastSeen);
   };
 
@@ -107,6 +127,9 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
         args: { pattern: tool.schema.string().describe('Case-insensitive regex for tool IDs and descriptions.') },
         async execute(args, context) {
           const hits = vault.grep(args.pattern, maxResults);
+          if (args.pattern === '^skill$' && context?.sessionID && hits.some((hit) => hit.id === 'skill')) {
+            skillPermits.add(context.sessionID);
+          }
           if (hits.length === 0) return `No tools matched pattern "${args.pattern}".`;
           authorize(context?.sessionID, hits);
           return `Found ${hits.length} tool(s):\n\n${hits.map(formatHit).join('\n\n')}`;
@@ -122,12 +145,19 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
         output.description = firstSentence ? `${firstSentence} ${deferLabel}` : deferLabel;
       }
     },
+    'tool.execute.before': async (input) => {
+      if (input.tool === 'skill') {
+        if (input.sessionID && skillPermits.has(input.sessionID)) {
+          skillPermits.delete(input.sessionID);
+          return;
+        }
+        throw new Error('Every skill call requires a new literal tool_search_regex({ pattern: "^skill$" }) immediately before the call.');
+      }
+      if (input.sessionID) skillPermits.delete(input.sessionID);
+    },
     'tool.execute.after': async (input, output) => {
       if (resetToolIDs.has(input.tool)) {
-        if (input.sessionID) {
-          authorizations.delete(input.sessionID); lastSeen.delete(input.sessionID);
-          persistence.deleteSession(input.sessionID); persistence.save(authorizations, lastSeen);
-        }
+        clearSessionState(input.sessionID);
         output.output = `${String(output.output ?? '')}\n\n[Tool Search] Deferred tool authorizations have been reset — search for any tools you need to use.`;
         return;
       }
@@ -148,19 +178,18 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
       deferrals = deferredTools.size;
 
       if (deferrals > 0) {
-        output.system.push(`${deferrals}/${total} tools are deferred ("${deferLabel}"). Before calling one, retrieve it with tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "<regex>" }). Deferred tools require a successful search before execution. Search results identify the canonical tool ID, which must be used for execution.`);
+        output.system.push(`${deferrals}/${total} tools are deferred ("${deferLabel}"). Before calling one, retrieve it with tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "<regex>" }). Deferred tools require a successful search before execution. Search results identify the canonical tool ID, which must be used for execution. Exception: each skill call, including nested or repeated calls, requires a new literal tool_search_regex({ pattern: "^skill$" }) immediately before that call; natural-language search and every other pattern do not authorize skill. One exact successful lookup permits one skill invocation.`);
         if (!alerted) { alerted = true; toast(ctx, 'Tool Search', `${deferrals}/${total} tools deferred.`, 'info', 4000); }
       }
     },
     'experimental.session.compacting': async (input, output) => {
-      authorizations.delete(input.sessionID); lastSeen.delete(input.sessionID);
-      persistence.deleteSession(input.sessionID); persistence.save(authorizations, lastSeen);
+      clearSessionState(input.sessionID);
       output.context.push('[Tool Search] Session compacted. Deferred tool authorizations have been reset — search for any tools you need to use.');
     },
     event: async ({ event }) => {
       if (event.type === 'session.deleted') {
         const sessionID = (event.properties as { sessionID?: unknown } | undefined)?.sessionID;
-        if (typeof sessionID === 'string' && sessionID.length > 0) { authorizations.delete(sessionID); lastSeen.delete(sessionID); persistence.deleteSession(sessionID); persistence.save(authorizations, lastSeen); }
+        if (typeof sessionID === 'string' && sessionID.length > 0) clearSessionState(sessionID);
         return;
       }
       if (event.type !== 'session.created' || updateStaged) return;
