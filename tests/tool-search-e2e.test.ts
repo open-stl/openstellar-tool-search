@@ -136,8 +136,10 @@ async function loadPlugin(options: PluginOptions = {}): Promise<PluginFixture> {
   return { hooks, ctx, toolSearch, toolSearchRegex };
 }
 
+let searchCounter = 0;
 async function executeSearch(tool: any, args: any): Promise<string> {
-  const result = await tool.execute(args, TOOL_CTX);
+  const ctx = { ...TOOL_CTX, sessionID: `${TOOL_CTX.sessionID}-${++searchCounter}` };
+  const result = await tool.execute(args, ctx);
   return typeof result === 'string' ? result : (result as any).output;
 }
 
@@ -352,18 +354,16 @@ describe('E2E: system.transform hook', () => {
 });
 
 describe('E2E: skill authorization policy', () => {
-  it('system prompt requires an exact literal lookup for every skill invocation', async () => {
+  it('system prompt treats skill like every other deferred tool', async () => {
     const ctx = makeCtx();
     const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
     await hooks['tool.definition']!({ toolID: 'skill' }, { description: 'Run a skill', parameters: {} });
-    await hooks['tool.definition']!({ toolID: 'deferred_tool' }, { description: 'A deferred tool', parameters: {} });
     const out: any = { system: [] };
     await hooks['experimental.chat.system.transform']!({} as any, out);
     const policy = out.system.join('\\n');
-    expect(policy).toContain('each skill call, including nested or repeated calls');
-    expect(policy).toContain('new literal tool_search_regex({ pattern: "^skill$" })');
-    expect(policy).toContain('natural-language search and every other pattern do not authorize skill');
-    expect(policy).toContain('One exact successful lookup permits one skill invocation');
+    expect(policy).toContain('Deferred tools require a successful search before execution');
+    expect(policy).not.toContain('Exception:');
+    expect(policy).not.toContain('One exact successful lookup permits one skill invocation');
   });
 });
 
@@ -443,5 +443,35 @@ describe('E2E: cross-references in tool descriptions', () => {
     const fx = await loadPlugin({ embedding: { enabled: false } });
     expect(fx.toolSearch.description).toContain('tool_search_regex');
     expect(fx.toolSearchRegex.description).toContain('tool_search');
+  });
+});
+
+describe('E2E: tool.execute.before pre-execution blocking', () => {
+  it('27. Unauthorized deferred tool execution throws [Tool Search Required]', async () => {
+    const fx = await loadPlugin({ embedding: { enabled: false } });
+    const beforeHook = fx.hooks['tool.execute.before']!;
+    await expect(beforeHook({ tool: 'github_create_issue', sessionID: 'sess-e2e-block' } as any, {} as any)).rejects.toThrow('[Tool Search Required]');
+  });
+
+  it('28. Executing tool_search authorizes the tool and allows execution', async () => {
+    const fx = await loadPlugin({ embedding: { enabled: false } });
+    const beforeHook = fx.hooks['tool.execute.before']!;
+    const sessionID = 'sess-e2e-allow';
+
+    // Blocked before search
+    await expect(beforeHook({ tool: 'github_create_issue', sessionID } as any, {} as any)).rejects.toThrow('[Tool Search Required]');
+
+    // Perform search
+    await fx.toolSearch.execute({ query: 'github_create_issue' }, { ...TOOL_CTX, sessionID });
+
+    // Allowed after search
+    await expect(beforeHook({ tool: 'github_create_issue', sessionID } as any, {} as any)).resolves.toBeUndefined();
+  });
+
+  it('29. Always-on search tools are exempt from pre-execution blocking', async () => {
+    const fx = await loadPlugin({ embedding: { enabled: false } });
+    const beforeHook = fx.hooks['tool.execute.before']!;
+    await expect(beforeHook({ tool: 'tool_search', sessionID: 'sess-e2e-exempt' } as any, {} as any)).resolves.toBeUndefined();
+    await expect(beforeHook({ tool: 'tool_search_regex', sessionID: 'sess-e2e-exempt' } as any, {} as any)).resolves.toBeUndefined();
   });
 });

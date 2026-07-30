@@ -68,6 +68,7 @@ function makeCtx(): PluginInput {
   } as any;
 }
 
+let _mcpCounter = 0;
 const TOOL_CTX = {
   sessionID: 's',
   messageID: 'm',
@@ -78,6 +79,10 @@ const TOOL_CTX = {
   metadata: vi.fn(),
   ask: vi.fn().mockResolvedValue(undefined),
 };
+
+function freshCtx() {
+  return { ...TOOL_CTX, sessionID: `mcp-${++_mcpCounter}` };
+}
 
 async function load() {
   const ctx = makeCtx();
@@ -103,27 +108,27 @@ describe('tool_search discovers MCP tools', () => {
   });
 
   it('"context7" finds context7_resolve-library-id', async () => {
-    const r = await fx.toolSearch.execute({ query: 'context7' }, TOOL_CTX);
+    const r = await fx.toolSearch.execute({ query: 'context7' }, freshCtx());
     expect(r).toContain('context7_resolve-library-id');
   }, 60000);
 
   it('"documentation library" finds context7_query-docs via param desc', async () => {
-    const r = await fx.toolSearch.execute({ query: 'documentation library' }, TOOL_CTX);
+    const r = await fx.toolSearch.execute({ query: 'documentation library' }, freshCtx());
     expect(r).toContain('context7_query-docs');
   });
 
   it('"exa web search" finds exa_web_search_exa', async () => {
-    const r = await fx.toolSearch.execute({ query: 'exa web search' }, TOOL_CTX);
+    const r = await fx.toolSearch.execute({ query: 'exa web search' }, freshCtx());
     expect(r).toContain('exa_web_search_exa');
   });
 
   it('"library id" finds context7_resolve-library-id via param name', async () => {
-    const r = await fx.toolSearch.execute({ query: 'library id' }, TOOL_CTX);
+    const r = await fx.toolSearch.execute({ query: 'library id' }, freshCtx());
     expect(r).toContain('context7_resolve-library-id');
   });
 
   it('full output (regression)', async () => {
-    const r = await fx.toolSearch.execute({ query: 'context7 documentation' }, TOOL_CTX);
+    const r = await fx.toolSearch.execute({ query: 'context7 documentation' }, freshCtx());
     console.log('\n--- tool_search("context7 documentation") ---\n' + r + '\n---');
     expect(r).toMatch(/^Found/);
   });
