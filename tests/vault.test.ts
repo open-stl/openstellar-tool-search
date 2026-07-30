@@ -137,6 +137,23 @@ describe('ToolVault', () => {
     expect(v.list().map((tool) => tool.id)).toEqual(['read']);
   });
 
+  it('resolveAlias returns exact match for real _ide tools (no stripping needed)', () => {
+    const v = new ToolVault();
+    v.add('foo', 'Canonical foo', {});
+    v.add('foo_ide', 'Real foo_ide tool', {});
+    expect(v.resolveAlias('foo_ide')).toMatchObject({ id: 'foo_ide' });
+    expect(v.resolveAlias('foo')).toMatchObject({ id: 'foo' });
+  });
+
+  it('resolveAlias strips _ide suffix to find cloaked tool canonical', () => {
+    const v = new ToolVault();
+    v.add('bash', 'Execute bash command', {});
+    v.add('read', 'Read a file', {});
+    expect(v.resolveAlias('bash_ide')).toMatchObject({ id: 'bash' });
+    expect(v.resolveAlias('read_ide')).toMatchObject({ id: 'read' });
+    expect(v.resolveAlias('bash_ide_ide')).toBeUndefined(); // no double strip
+  });
+
   it('grep returns no matches for invalid regex', () => {
     const v = new ToolVault();
     v.add('test', 'test tool', {});
@@ -243,5 +260,82 @@ describe('ToolVault', () => {
 
     const res = await v.query('file', 5);
     expect(res[0].id).toBe('read_file');
+  });
+
+  describe('prebuildSemantic', () => {
+    it('returns undefined when semantic matcher is disabled', () => {
+      const v = new ToolVault({ embedding: { enabled: false } });
+      v.add('read', 'Read a file', {});
+      expect(v.prebuildSemantic()).toBeUndefined();
+    });
+
+    it('returns undefined when index is already current', () => {
+      const v = new ToolVault({ embedding: { enabled: true } });
+      v.add('read', 'Read a file', {});
+      // Manually mark not-stale by simulating existing index state.
+      (v as unknown as { semanticStale: boolean }).semanticStale = false;
+      expect(v.prebuildSemantic()).toBeUndefined();
+    });
+
+    it('returns a promise when there is work to build', () => {
+      const v = new ToolVault({ embedding: { enabled: true } });
+      v.add('read', 'Read a file', {});
+      const p = v.prebuildSemantic();
+      expect(p).toBeInstanceOf(Promise);
+    });
+
+    it('isSemanticReady reflects build state', () => {
+      const v = new ToolVault({ embedding: { enabled: true } });
+      v.add('read', 'Read a file', {});
+      expect(v.isSemanticReady).toBe(false);
+      (v as unknown as { semanticStale: boolean }).semanticStale = false;
+      expect(v.isSemanticReady).toBe(true);
+    });
+  });
+
+  describe('query timeout', () => {
+    it('returns BM25 results within timeoutMs even when semantic is slow', async () => {
+      // Make the indexer hang forever.
+      const index = vi
+        .spyOn(SemanticMatcher.prototype, 'index')
+        .mockImplementation(
+          () => new Promise<void>(() => {}),
+        );
+      const v = new ToolVault({ embedding: { enabled: true }, cascadeThreshold: 100 });
+      v.add('read_file', 'Reads contents from disk', {});
+
+      const start = Date.now();
+      const res = await v.query('read', 5, 50); // 50ms timeout
+      const elapsed = Date.now() - start;
+
+      expect(res[0].id).toBe('read_file');
+      expect(elapsed).toBeLessThan(300); // should NOT wait the full build time
+      expect(index).toHaveBeenCalled();
+    });
+
+    it('still uses semantic fusion when build finishes before timeout', async () => {
+      vi.spyOn(SemanticMatcher.prototype, 'index').mockResolvedValue(undefined);
+      vi.spyOn(SemanticMatcher.prototype, 'locate').mockResolvedValue(
+        new Map([['read_file', 0.95]]),
+      );
+      const v = new ToolVault({ embedding: { enabled: true }, cascadeThreshold: 100 });
+      v.add('git_commit', 'Creates a commit', {});
+      v.add('read_file', 'Reads file contents', {});
+
+      const res = await v.query('file', 5, 1000);
+      expect(res.map((r) => r.id)).toContain('read_file');
+    });
+
+    it('timeoutMs=0 falls back to legacy behavior (no timeout)', async () => {
+      vi.spyOn(SemanticMatcher.prototype, 'index').mockResolvedValue(undefined);
+      const locate = vi
+        .spyOn(SemanticMatcher.prototype, 'locate')
+        .mockResolvedValue(new Map());
+      const v = new ToolVault({ embedding: { enabled: true }, cascadeThreshold: 100 });
+      v.add('read_file', 'Reads file contents', {});
+
+      await v.query('file', 5, 0); // explicit 0 = no timeout
+      expect(locate).toHaveBeenCalled();
+    });
   });
 });

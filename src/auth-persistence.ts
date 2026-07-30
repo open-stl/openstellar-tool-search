@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join, dirname } from 'node:path';
-import { env } from 'node:process';
+import process, { env } from 'node:process';
 
 export interface CanonicalToolAuthorization {
   kind: 'canonical-tool';
@@ -31,6 +31,15 @@ export function getDefaultAuthStoragePath(): string {
   return join(baseDir, 'opencode', 'tool-search', 'authorizations.json');
 }
 
+export function looksLikeSessionEntry(entry: unknown): entry is PersistedSession {
+  return (
+    typeof entry === 'object' &&
+    entry !== null &&
+    !Array.isArray(entry) &&
+    Array.isArray((entry as PersistedSession).tools)
+  );
+}
+
 export class AuthPersistence {
   private filePath: string;
   private debounceMs: number;
@@ -42,7 +51,15 @@ export class AuthPersistence {
 
   constructor(options: AuthPersistenceOptions = {}) {
     this.filePath = options.filePath ?? getDefaultAuthStoragePath();
+    // Accepted-loss window: 50ms debounce window accepts write loss on sudden SIGKILL/uncaught crash.
+    // Flush on process 'beforeExit' ensures clean exit persistence.
     this.debounceMs = options.debounceMs ?? 50;
+
+    if (typeof process !== 'undefined' && typeof process.on === 'function') {
+      process.on('beforeExit', () => {
+        this.flushSync();
+      });
+    }
   }
 
   public getFilePath(): string {
@@ -69,11 +86,7 @@ export class AuthPersistence {
       }
 
       for (const [sessionID, entry] of Object.entries(data)) {
-        if (
-          !entry ||
-          typeof entry !== 'object' ||
-          !Array.isArray(entry.tools)
-        ) {
+        if (!looksLikeSessionEntry(entry)) {
           continue;
         }
 
@@ -196,11 +209,7 @@ export class AuthPersistence {
 
         // Validate persisted structure without expiring entries by elapsed time.
         for (const [sessionID, entry] of Object.entries(mergedPayload)) {
-          if (
-            !entry ||
-            typeof entry !== 'object' ||
-            !Array.isArray(entry.tools)
-          ) {
+          if (!looksLikeSessionEntry(entry)) {
             delete mergedPayload[sessionID];
           }
         }
@@ -240,6 +249,78 @@ export class AuthPersistence {
 
     if (this.pendingState) {
       await this.flush();
+    }
+  }
+
+  /** Synchronously flushes any pending data to disk (e.g. on process beforeExit). */
+  public flushSync(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+
+    if (!this.pendingState) return;
+
+    const stateToWrite = this.pendingState;
+    this.pendingState = null;
+
+    try {
+      let mergedPayload: PersistedAuthMap = {};
+      if (existsSync(this.filePath)) {
+        try {
+          const content = readFileSync(this.filePath, 'utf-8');
+          if (content.trim()) {
+            const data = JSON.parse(content) as PersistedAuthMap;
+            if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+              mergedPayload = data;
+            }
+          }
+        } catch {
+          mergedPayload = {};
+        }
+      }
+
+      for (const sessionID of this.deletedSessions) {
+        delete mergedPayload[sessionID];
+        this.knownSessions.delete(sessionID);
+      }
+      this.deletedSessions.clear();
+
+      for (const [sessionID, toolsSet] of stateToWrite.authorizations.entries()) {
+        const tools: PersistedToolAuthorization[] = Array.from(toolsSet).map((value) => value);
+        if (tools.length > 0) {
+          const ls = stateToWrite.lastSeen?.get(sessionID) ?? mergedPayload[sessionID]?.lastSeen ?? Date.now();
+          mergedPayload[sessionID] = { tools, lastSeen: ls };
+        } else {
+          delete mergedPayload[sessionID];
+        }
+      }
+
+      for (const [sessionID, entry] of Object.entries(mergedPayload)) {
+        if (!looksLikeSessionEntry(entry)) {
+          delete mergedPayload[sessionID];
+        }
+      }
+
+      const dir = dirname(this.filePath);
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+
+      const content = JSON.stringify(mergedPayload, null, 2);
+      const tmpPath = `${this.filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+
+      writeFileSync(tmpPath, content, 'utf-8');
+      try {
+        renameSync(tmpPath, this.filePath);
+      } catch {
+        writeFileSync(this.filePath, content, 'utf-8');
+        try {
+          if (existsSync(tmpPath)) unlinkSync(tmpPath);
+        } catch {}
+      }
+    } catch (err) {
+      console.warn(`[Tool Search] Warning: Failed to write authorization state to ${this.filePath}:`, err);
     }
   }
 }

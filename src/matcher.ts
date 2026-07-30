@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isMainThread, Worker } from 'node:worker_threads';
+import { pipelineOptions } from './types.js';
 import type { EmbedConfig } from './types.js';
 
 type InferenceOpts = { pooling: string; normalize: boolean };
@@ -93,12 +94,9 @@ export class SemanticMatcher {
     try {
       const mod = await import('@xenova/transformers');
       const name = this.cfg.model ?? DEFAULT_MODEL;
-      const pipelineOpts: Record<string, unknown> = {};
-      if (this.cfg.quantized !== undefined) pipelineOpts.quantized = this.cfg.quantized;
-      if (this.cfg.dtype !== undefined) pipelineOpts.dtype = this.cfg.dtype;
+      const opts = pipelineOptions(this.cfg);
 
-      const opts = Object.keys(pipelineOpts).length > 0 ? pipelineOpts : undefined;
-      this.model = (await mod.pipeline('feature-extraction', name, opts)) as unknown as ModelPipeline;
+      this.model = (await mod.pipeline('feature-extraction', name, Object.keys(opts).length > 0 ? opts : undefined)) as unknown as ModelPipeline;
     } catch (e) {
       this.loadError = e as Error;
       this.loadPromise = null;
@@ -155,10 +153,7 @@ export class SemanticMatcher {
       this.worker!.postMessage({
         id,
         model: this.cfg.model ?? DEFAULT_MODEL,
-        pipelineOptions: {
-          ...(this.cfg.quantized === undefined ? {} : { quantized: this.cfg.quantized }),
-          ...(this.cfg.dtype === undefined ? {} : { dtype: this.cfg.dtype }),
-        },
+        pipelineOptions: pipelineOptions(this.cfg),
         texts,
         options: opts,
       });
@@ -227,12 +222,7 @@ export class SemanticMatcher {
           }
         } catch (err) {
           for (const item of chunk) {
-            try {
-              const out = await this.runInference(item.text, { pooling: 'mean', normalize: true });
-              this.vectors.set(item.id, this.normalize(out.data));
-            } catch {
-              this.vectors.set(item.id, new Float32Array(this.dims));
-            }
+            await this.indexOne(item.id, item.text);
           }
         }
       }
@@ -249,6 +239,15 @@ export class SemanticMatcher {
         .catch((err) => {
           console.warn('[tool-search] Vector disk cache save failed:', err);
         });
+    }
+  }
+
+  private async indexOne(id: string, text: string): Promise<void> {
+    try {
+      const out = await this.runInference(text, { pooling: 'mean', normalize: true });
+      this.vectors.set(id, this.normalize(out.data));
+    } catch {
+      this.vectors.set(id, new Float32Array(this.dims));
     }
   }
 

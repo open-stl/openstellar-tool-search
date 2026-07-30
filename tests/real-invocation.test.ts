@@ -128,8 +128,10 @@ async function loadPlugin(options: PluginOptions = {}): Promise<{
   };
 }
 
+let _execCounter = 0;
 async function exec(tool: any, args: any): Promise<string> {
-  const r = await tool.execute(args, TOOL_CTX);
+  const ctx = { ...TOOL_CTX, sessionID: `${TOOL_CTX.sessionID}-${++_execCounter}` };
+  const r = await tool.execute(args, ctx);
   return typeof r === 'string' ? r : (r as any).output;
 }
 

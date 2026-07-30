@@ -124,13 +124,16 @@ async function loadPlugin(options: PluginOptions = {}): Promise<{
   };
 }
 
+let _cmpCounter = 0;
 async function search(plugin: { tSearch: any }, query: string): Promise<string> {
-  const r = await plugin.tSearch.execute({ query }, TOOL_CTX);
+  const ctx = { ...TOOL_CTX, sessionID: `${TOOL_CTX.sessionID}-${++_cmpCounter}` };
+  const r = await plugin.tSearch.execute({ query }, ctx);
   return typeof r === 'string' ? r : (r as any).output;
 }
 
 async function regex(plugin: { tRegex: any }, pattern: string): Promise<string> {
-  const r = await plugin.tRegex.execute({ pattern }, TOOL_CTX);
+  const ctx = { ...TOOL_CTX, sessionID: `${TOOL_CTX.sessionID}-${++_cmpCounter}` };
+  const r = await plugin.tRegex.execute({ pattern }, ctx);
   return typeof r === 'string' ? r : (r as any).output;
 }
 

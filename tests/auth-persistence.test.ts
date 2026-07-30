@@ -4,7 +4,8 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { env } from 'node:process';
 import type { Plugin, PluginInput, PluginOptions } from '@opencode-ai/plugin';
-import { AuthPersistence, getDefaultAuthStoragePath } from '../src/auth-persistence.js';
+import { AuthPersistence, getDefaultAuthStoragePath, type PersistedToolAuthorization } from '../src/auth-persistence.js';
+import { AuthorizationState } from '../src/authorization-state.js';
 import { ToolSearchPlugin } from '../src/plugin.js';
 
 const FIXTURE_TOOLS = [
@@ -54,6 +55,11 @@ const TOOL_CTX = {
 };
 
 
+async function runBeforeHook(hooks: any, tool: string, sessionID: string): Promise<void> {
+  const before = hooks['tool.execute.before']!;
+  await before({ tool, sessionID, callID: 'c', args: {} }, {});
+}
+
 async function runAfterHook(hooks: any, tool: string, sessionID: string, initialOutput: string = 'ok'): Promise<{ hasReminder: boolean; output: string }> {
   const after = hooks['tool.execute.after']!;
   const out: any = { output: initialOutput };
@@ -74,6 +80,7 @@ describe('AuthPersistence (Unit Tests)', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     if (existsSync(testDir)) {
       rmSync(testDir, { recursive: true, force: true });
     }
@@ -287,6 +294,52 @@ describe('AuthPersistence (Unit Tests)', () => {
     expect(content[sessionX]).toBeDefined();
     expect(content[sessionX].tools).toEqual(['toolB']);
   });
+
+  it('F11: AuthorizationState migrates legacy string entries instead of purging them', () => {
+    const sessionID = 'f11-migration-session';
+    const authorizations = new Map<string, Set<PersistedToolAuthorization>>([
+      [sessionID, new Set<PersistedToolAuthorization>([
+        'ordinary_tool',
+        'foo_ide',
+        '@canonical:bar_ide',
+      ])],
+    ]);
+    const lastSeen = new Map<string, number>();
+    vi.spyOn(AuthPersistence.prototype, 'load').mockReturnValue({ authorizations, lastSeen });
+    vi.spyOn(AuthPersistence.prototype, 'save').mockImplementation(() => {});
+
+    const authState = new AuthorizationState({
+      alwaysOn: ['tool_search', 'tool_search_regex'],
+      resetTools: ['compress'],
+    });
+
+    // All three entries should be preserved (legacy _ide and @canonical: are migrated, plain strings stay)
+    const auths = authorizations.get(sessionID)!;
+    expect(auths.size).toBe(3);
+
+    const values = Array.from(auths);
+
+    // 'ordinary_tool' stays as a plain string (no migration needed)
+    const plainEntry = values.find((v) => v === 'ordinary_tool');
+    expect(plainEntry).toBe('ordinary_tool');
+
+    // 'foo_ide' is migrated to canonical object form
+    const fooIdeEntry = values.find((v): v is { kind: 'canonical-tool'; version: 1; canonicalId: string } =>
+      typeof v === 'object' && v !== null && 'canonicalId' in v && (v as any).canonicalId === 'foo_ide'
+    );
+    expect(fooIdeEntry).toBeDefined();
+
+    // '@canonical:bar_ide' is migrated to canonical object form with prefix stripped
+    const barIdeEntry = values.find((v): v is { kind: 'canonical-tool'; version: 1; canonicalId: string } =>
+      typeof v === 'object' && v !== null && 'canonicalId' in v && (v as any).canonicalId === 'bar_ide'
+    );
+    expect(barIdeEntry).toBeDefined();
+
+    // isAuthorized should work for all three
+    expect(authState.isAuthorized(sessionID, 'ordinary_tool')).toBe(true);
+    expect(authState.isAuthorized(sessionID, 'foo_ide')).toBe(true);
+    expect(authState.isAuthorized(sessionID, 'bar_ide')).toBe(true);
+  });
 });
 
 describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
@@ -338,16 +391,14 @@ describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
     await toolSearch.execute({ query: 'github_create_issue' }, { ...TOOL_CTX, sessionID });
     await new Promise((r) => setTimeout(r, 100));
 
-    // Verify instance #1: no reminder after authorization
-    const output1 = await runAfterHook(instance1.hooks, 'github_create_issue', sessionID);
-    expect(output1.hasReminder).toBe(false);
+    // Verify instance #1: pre-execution hook resolves without throwing
+    await expect(runBeforeHook(instance1.hooks, 'github_create_issue', sessionID)).resolves.toBeUndefined();
 
     // Now instantiate plugin instance #2 (simulating OpenCode restart)
     const instance2 = await createPluginInstance();
 
     // Instance #2 should already authorize github_create_issue for sessionID WITHOUT new search
-    const output2 = await runAfterHook(instance2.hooks, 'github_create_issue', sessionID);
-    expect(output2.hasReminder).toBe(false);
+    await expect(runBeforeHook(instance2.hooks, 'github_create_issue', sessionID)).resolves.toBeUndefined();
   });
 
   it('B) Different sessionID in instance #2 does NOT inherit authorization', async () => {
@@ -362,12 +413,10 @@ describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
     const instance2 = await createPluginInstance();
 
     // Session A is authorized in instance #2
-    const aOutput = await runAfterHook(instance2.hooks, 'github_create_issue', sessionA);
-    expect(aOutput.hasReminder).toBe(false);
+    await expect(runBeforeHook(instance2.hooks, 'github_create_issue', sessionA)).resolves.toBeUndefined();
 
-    // Session B is not authorized in instance #2, so its after hook adds a reminder.
-    const bOutput = await runAfterHook(instance2.hooks, 'github_create_issue', sessionB);
-    expect(bOutput.hasReminder).toBe(true);
+    // Session B is not authorized in instance #2, so pre-execution hook blocks execution with error
+    await expect(runBeforeHook(instance2.hooks, 'github_create_issue', sessionB)).rejects.toThrow('[Tool Search Required]');
   });
 
   it('C) Compaction in instance #2 clears persisted auth; fresh plugin instance #3 requires re-search', async () => {
@@ -384,12 +433,12 @@ describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
     await compacting({ sessionID }, { context: [] } as any);
     await new Promise((r) => setTimeout(r, 100));
 
-    // Instance #2 permits execution; the after hook supplies the reminder.
-    expect((await runAfterHook(instance2.hooks, 'github_create_issue', sessionID)).hasReminder).toBe(true);
+    // Instance #2 blocks execution with pre-execution error
+    await expect(runBeforeHook(instance2.hooks, 'github_create_issue', sessionID)).rejects.toThrow('[Tool Search Required]');
 
-    // Fresh plugin instance #3 also permits execution and requires a reminder.
+    // Fresh plugin instance #3 also blocks execution with pre-execution error
     const instance3 = await createPluginInstance();
-    expect((await runAfterHook(instance3.hooks, 'github_create_issue', sessionID)).hasReminder).toBe(true);
+    await expect(runBeforeHook(instance3.hooks, 'github_create_issue', sessionID)).rejects.toThrow('[Tool Search Required]');
   });
 
   it('D) Authorization survives simulated elapsed time across restarts', async () => {
@@ -404,8 +453,7 @@ describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
     writeFileSync(testFilePath, JSON.stringify(oldState), 'utf-8');
 
     const instance1 = await createPluginInstance();
-    const output = await runAfterHook(instance1.hooks, 'github_create_issue', sessionID);
-    expect(output.hasReminder).toBe(false);
+    await expect(runBeforeHook(instance1.hooks, 'github_create_issue', sessionID)).resolves.toBeUndefined();
   });
 
   it('session.deleted clears persisted authorization when payload includes sessionID', async () => {
@@ -414,12 +462,12 @@ describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
     const toolSearch = (instance.hooks.tool as any).tool_search;
     await toolSearch.execute({ query: 'github_create_issue' }, { ...TOOL_CTX, sessionID });
     await new Promise((r) => setTimeout(r, 100));
-    expect((await runAfterHook(instance.hooks, 'github_create_issue', sessionID)).hasReminder).toBe(false);
+    await expect(runBeforeHook(instance.hooks, 'github_create_issue', sessionID)).resolves.toBeUndefined();
 
     await instance.hooks.event!({ event: { type: 'session.deleted', properties: { sessionID, info: { id: sessionID } } } } as any);
     await new Promise((r) => setTimeout(r, 100));
     const fresh = await createPluginInstance();
-    expect((await runAfterHook(fresh.hooks, 'github_create_issue', sessionID)).hasReminder).toBe(true);
+    await expect(runBeforeHook(fresh.hooks, 'github_create_issue', sessionID)).rejects.toThrow('[Tool Search Required]');
   });
 
   it('E) Compress tool execution clears persisted auth across instances', async () => {
@@ -432,21 +480,18 @@ describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
 
     const instance2 = await createPluginInstance();
     // Authorized before compress
-    const beforeOutput = await runAfterHook(instance2.hooks, 'github_create_issue', sessionID);
-    expect(beforeOutput.hasReminder).toBe(false);
+    await expect(runBeforeHook(instance2.hooks, 'github_create_issue', sessionID)).resolves.toBeUndefined();
 
     // Execute compress tool in instance 2
-     const compressOutput = await runAfterHook(instance2.hooks, 'compress', sessionID);
-     expect(compressOutput.output).toContain('[Tool Search] Deferred tool authorizations have been reset');
-     await new Promise((r) => setTimeout(r, 100));
+    const compressOutput = await runAfterHook(instance2.hooks, 'compress', sessionID);
+    expect(compressOutput.output).toContain('[Tool Search] Deferred tool authorizations have been reset');
+    await new Promise((r) => setTimeout(r, 100));
 
-    // Instance #2 permits execution; the after hook supplies the reminder.
-    const reminder2 = await runAfterHook(instance2.hooks, 'github_create_issue', sessionID);
-    expect(reminder2.hasReminder).toBe(true);
+    // Instance #2 blocks execution after compress
+    await expect(runBeforeHook(instance2.hooks, 'github_create_issue', sessionID)).rejects.toThrow('[Tool Search Required]');
 
-    // Fresh plugin instance #3 also requires a reminder because compress cleared persisted store
+    // Fresh plugin instance #3 also requires a re-search because compress cleared persisted store
     const instance3 = await createPluginInstance();
-    const reminder3 = await runAfterHook(instance3.hooks, 'github_create_issue', sessionID);
-    expect(reminder3.hasReminder).toBe(true);
+    await expect(runBeforeHook(instance3.hooks, 'github_create_issue', sessionID)).rejects.toThrow('[Tool Search Required]');
   });
 });

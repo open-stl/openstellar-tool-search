@@ -81,7 +81,34 @@ export class ToolVault {
     return build;
   }
 
-  async query(text: string, limit: number): Promise<ToolMeta[]> {
+  /**
+   * Fire-and-forget trigger to (re)build the semantic index. Safe to call
+   * repeatedly — dedups via `semanticStale` + `semanticBuildPromise` guards.
+   * Returns the in-flight build promise (which resolves when indexing
+   * finishes), or undefined if no semantic matcher is configured or the
+   * index is already up to date.
+   *
+   * Use this in hot paths (e.g. experimental.chat.system.transform) to
+   * start model load BEFORE the first tool_search call so the user does
+   * not perceive a freeze.
+   */
+  prebuildSemantic(): Promise<void> | undefined {
+    if (!this.semantic) return undefined;
+    if (!this.semanticStale) return undefined;
+    return this.buildSemantic();
+  }
+
+  /** Inspection: is the semantic index currently up to date? */
+  get isSemanticReady(): boolean {
+    return !this.semantic || !this.semanticStale;
+  }
+
+  /** Inspection: is a semantic build currently in flight? */
+  get isSemanticBuilding(): boolean {
+    return Boolean(this.semanticBuildPromise);
+  }
+
+  async query(text: string, limit: number, timeoutMs = 0): Promise<ToolMeta[]> {
     // 1. BM25 fast-path — always run first (sub-ms).
     const bm25Hits = this.queryBM25(text, limit);
 
@@ -94,16 +121,62 @@ export class ToolVault {
       : 0;
     if (topScore >= this.cascadeThreshold) return bm25Hits;
 
-    // 4. Semantic fallback with RRF fusion.
+    // 4. Semantic fallback with RRF fusion. If `timeoutMs > 0`, race the
+    //    build+inference against a timer — on timeout, return BM25
+    //    immediately and let the background build continue.
     try {
-      await this.buildSemantic();
-      if (this.semanticStale) await this.buildSemantic();
-      const semanticScores = await this.semantic.locate(text);
-      if (semanticScores.size > 0) return this.fuseRRF(bm25Hits, semanticScores, limit);
+      if (timeoutMs > 0) {
+        const result = await this.runSemanticWithTimeout(text, bm25Hits, limit, timeoutMs);
+        if (result) return result;
+        // Timed out — BM25 already shown to user; build continues in background.
+      } else {
+        await this.buildSemantic();
+        if (this.semanticStale) await this.buildSemantic();
+        const semanticScores = await this.semantic.locate(text);
+        if (semanticScores.size > 0) return this.fuseRRF(bm25Hits, semanticScores, limit);
+      }
     } catch (err) {
       console.warn('[tool-search] Embedding search failed, falling back to BM25:', err);
     }
     return bm25Hits;
+  }
+
+  /**
+   * Race semantic build+inference against a wall-clock timeout. Returns
+   * the fused result list on success, or `null` on timeout. On timeout,
+   * the in-flight build promise is intentionally left running so the
+   * next query benefits from a warm cache.
+   */
+  private async runSemanticWithTimeout(
+    text: string,
+    bm25Hits: ToolMeta[],
+    limit: number,
+    timeoutMs: number,
+  ): Promise<ToolMeta[] | null> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), timeoutMs);
+    });
+    const work = (async (): Promise<ToolMeta[] | null> => {
+      try {
+        await this.buildSemantic();
+        if (this.semanticStale) await this.buildSemantic();
+        const semanticScores = await this.semantic!.locate(text);
+        if (semanticScores.size > 0) return this.fuseRRF(bm25Hits, semanticScores, limit);
+        return bm25Hits;
+      } catch (err) {
+        console.warn('[tool-search] Embedding search failed, falling back to BM25:', err);
+        return bm25Hits;
+      }
+    })();
+    try {
+      const winner = await Promise.race([work, timeout]);
+      if (timer) clearTimeout(timer);
+      return winner === 'timeout' ? null : (winner ?? bm25Hits);
+    } finally {
+      // If work is still pending, do NOT cancel it — we want the build to
+      // continue so subsequent calls pay no model-load cost.
+    }
   }
 
   private fuseRRF(
@@ -137,8 +210,11 @@ export class ToolVault {
     const seen = new Set(bm25.map((t) => t.id));
     const injected: ToolMeta[] = [];
     for (const token of tokens) {
-      const match = this.store.get(token);
-      if (match && !seen.has(match.id)) { injected.push(match); seen.add(match.id); }
+      const match = this.resolveAlias(token);
+      if (match && !seen.has(match.id)) {
+        injected.push(match);
+        seen.add(match.id);
+      }
     }
     if (injected.length === 0) return bm25;
     return [...injected, ...bm25].slice(0, limit);
@@ -159,6 +235,15 @@ export class ToolVault {
       }
     }
     return hits;
+  }
+
+  resolveAlias(id: string): ToolMeta | undefined {
+    const exact = this.store.get(id);
+    if (exact) return exact;
+    if (id.endsWith('_ide')) {
+      return this.store.get(id.slice(0, -4));
+    }
+    return undefined;
   }
 
   get(id: string): ToolMeta | undefined { return this.store.get(id); }
