@@ -47,10 +47,13 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
   const maxResults = opts.searchLimit ?? 10;
   const deferLabel = opts.deferDescription ?? DEFAULT_DEFER;
   const searchTimeoutMs = opts.searchTimeoutMs ?? 2000;
+  const embedding = opts.embedding
+    ? { useWorker: true, ...opts.embedding }
+    : { enabled: true, useWorker: true };
   const vault = new ToolVault({
     k1: opts.bm25?.k1,
     b: opts.bm25?.b,
-    embedding: opts.embedding ?? { enabled: true },
+    embedding,
   });
   const authorization = new AuthorizationState({
     alwaysOn: [...SEARCH_IDS, ...(opts.alwaysLoad ?? [])],
@@ -179,7 +182,7 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
       // ONNX init cost (~5-10s on cold cache). Errors are surfaced via
       // toast so users can diagnose network restrictions instead of
       // seeing a silent fallback to BM25.
-      const buildPromise = vault.prebuildSemantic();
+      const buildPromise = embedding.useWorker ? vault.prebuildSemantic() : undefined;
       if (buildPromise) {
         buildPromise.catch((err: unknown) => {
           toast(

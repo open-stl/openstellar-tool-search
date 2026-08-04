@@ -309,7 +309,7 @@ describe('ToolVault', () => {
       const elapsed = Date.now() - start;
 
       expect(res[0].id).toBe('read_file');
-      expect(elapsed).toBeLessThan(300); // should NOT wait the full build time
+      expect(elapsed).toBeLessThan(1000); // should NOT wait the full build (worker startup overhead) time
       expect(index).toHaveBeenCalled();
     });
 

@@ -25,6 +25,8 @@ export class SemanticMatcher {
   private worker: Worker | null = null;
   private workerRequests = new Map<number, { resolve: (value: { data: Float32Array; dims?: number[] }) => void; reject: (error: Error) => void }>();
   private workerSequence = 0;
+  private workerReady = false;
+  private workerInitFailed = false;
 
   constructor(private cfg: EmbedConfig) {}
 
@@ -84,10 +86,115 @@ export class SemanticMatcher {
   }
 
   async open(): Promise<void> {
+    if (this.isWorkerEnabled) {
+      if (this.workerReady) return;
+      if (this.workerInitFailed || this.loadError) return;
+      if (this.loadPromise) return this.loadPromise;
+      this.loadPromise = this.doLoadWorker();
+      return this.loadPromise;
+    }
+
     if (this.model) return;
     if (this.loadPromise) return this.loadPromise;
     this.loadPromise = this.doLoad();
     return this.loadPromise;
+  }
+
+  private async doLoadWorker(): Promise<void> {
+    const workerUrl = new URL('./matcher.worker.js', import.meta.url);
+    if (!this.workerAvailable) {
+      this.loadError = new Error('Embedding worker module is unavailable');
+      this.workerInitFailed = true;
+      return;
+    }
+
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
+      };
+
+      const rejectWorkerRequests = (error: Error): void => {
+        for (const request of this.workerRequests.values()) request.reject(error);
+        this.workerRequests.clear();
+      };
+
+      try {
+        this.worker = new Worker(workerUrl);
+      } catch (err) {
+        this.loadError = err instanceof Error ? err : new Error(String(err));
+        this.workerInitFailed = true;
+        finish();
+        return;
+      }
+
+      this.worker.on('message', (message: {
+        type?: string;
+        id?: number;
+        data?: Float32Array;
+        dims?: number[];
+        error?: string;
+        message?: string;
+      }) => {
+        if (message.type === 'ready') {
+          this.workerReady = true;
+          this.workerInitFailed = false;
+          finish();
+          return;
+        }
+
+        if (message.type === 'error') {
+          this.workerInitFailed = true;
+          this.loadError = new Error(message.message ?? 'Worker initialization failed');
+          this.workerReady = false;
+          rejectWorkerRequests(this.loadError);
+          this.worker?.terminate();
+          this.worker = null;
+          finish();
+          return;
+        }
+
+        if (message.id !== undefined) {
+          const request = this.workerRequests.get(message.id);
+          if (!request) return;
+          this.workerRequests.delete(message.id);
+          if (message.error || !message.data) request.reject(new Error(message.error ?? 'Worker inference failed'));
+          else request.resolve({ data: message.data, dims: message.dims });
+        }
+      });
+
+      this.worker.on('error', (error) => {
+        const err = error instanceof Error ? error : new Error(String(error));
+        this.loadError = err;
+        this.workerInitFailed = true;
+        this.workerReady = false;
+        rejectWorkerRequests(err);
+        this.worker?.terminate();
+        this.worker = null;
+        finish();
+      });
+
+      this.worker.on('exit', (code) => {
+        if (this.worker) {
+          const err = new Error(`Embedding worker exited with code ${code}`);
+          this.loadError = err;
+          this.workerInitFailed = true;
+          this.workerReady = false;
+          rejectWorkerRequests(err);
+          this.worker = null;
+          finish();
+        }
+      });
+
+      this.worker.postMessage({
+        type: 'init',
+        model: this.cfg.model ?? DEFAULT_MODEL,
+        pipelineOptions: pipelineOptions(this.cfg),
+      });
+    });
   }
 
   private async doLoad(): Promise<void> {
@@ -104,6 +211,9 @@ export class SemanticMatcher {
   }
 
   get active(): boolean {
+    if (this.isWorkerEnabled) {
+      return this.workerReady && !this.workerInitFailed;
+    }
     return this.model !== null;
   }
 
@@ -119,50 +229,25 @@ export class SemanticMatcher {
     texts: string | string[],
     opts: InferenceOpts,
   ): Promise<{ data: Float32Array; dims?: number[] }> {
-    if (!this.model) throw new Error('Model pipeline not initialized');
-    if (!this.isWorkerEnabled || !isMainThread) return this.model(texts, opts);
+    if (this.isWorkerEnabled && isMainThread) {
+      if (!this.workerReady || !this.worker) {
+        throw new Error('Worker not ready or initialized');
+      }
 
-    const workerUrl = new URL('./matcher.worker.js', import.meta.url);
-    if (!this.workerAvailable) throw new Error('Embedding worker module is unavailable');
-
-    if (!this.worker) {
-      this.worker = new Worker(workerUrl);
-      this.worker.on('message', (message: { id: number; data?: Float32Array; dims?: number[]; error?: string }) => {
-        const request = this.workerRequests.get(message.id);
-        if (!request) return;
-        this.workerRequests.delete(message.id);
-        if (message.error || !message.data) request.reject(new Error(message.error ?? 'Worker inference failed'));
-        else request.resolve({ data: message.data, dims: message.dims });
-      });
-      const rejectWorkerRequests = (error: Error): void => {
-        for (const request of this.workerRequests.values()) request.reject(error);
-        this.workerRequests.clear();
-        this.worker = null;
-      };
-      this.worker.on('error', (error) => {
-        rejectWorkerRequests(error instanceof Error ? error : new Error(String(error)));
-      });
-      this.worker.on('exit', (code) => {
-        if (this.worker) rejectWorkerRequests(new Error(`Embedding worker exited with code ${code}`));
+      const id = ++this.workerSequence;
+      return new Promise<{ data: Float32Array; dims?: number[] }>((resolve, reject) => {
+        this.workerRequests.set(id, { resolve, reject });
+        this.worker!.postMessage({
+          type: 'inference',
+          id,
+          texts,
+          options: opts,
+        });
       });
     }
 
-    const id = ++this.workerSequence;
-    return new Promise<{ data: Float32Array; dims?: number[] }>((resolve, reject) => {
-      this.workerRequests.set(id, { resolve, reject });
-      this.worker!.postMessage({
-        id,
-        model: this.cfg.model ?? DEFAULT_MODEL,
-        pipelineOptions: pipelineOptions(this.cfg),
-        texts,
-        options: opts,
-      });
-    }).catch((error: unknown) => {
-      this.worker?.terminate();
-      this.worker = null;
-      if (this.model) return this.model(texts, opts);
-      throw error;
-    });
+    if (!this.model) throw new Error('Model pipeline not initialized');
+    return this.model(texts, opts);
   }
 
   async index(entries: IndexedEntry[]): Promise<void> {
@@ -179,7 +264,7 @@ export class SemanticMatcher {
           for (const [id, vecArray] of Object.entries(parsed)) {
             this.vectors.set(id, this.normalize(new Float32Array(vecArray)));
           }
-          return; // Skip ONNX this.model() inference entirely on cache hit!
+          return; // Skip ONNX inference entirely on cache hit!
         } catch {
           // Fall through on cache parse error
         }
@@ -187,7 +272,7 @@ export class SemanticMatcher {
     }
 
     await this.open();
-    if (!this.model) return; // model failed to load — skip semantic, caller falls back to BM25
+    if (!this.active) return; // model/worker failed to load — skip semantic, caller falls back to BM25
     this.vectors.clear();
 
     if (entries.length === 0) return;
@@ -254,7 +339,7 @@ export class SemanticMatcher {
   async locate(text: string): Promise<Map<string, number>> {
     await this.open();
     if (!text.trim() || this.vectors.size === 0) return new Map();
-    if (!this.model) return new Map();
+    if (!this.active) return new Map();
 
     const q = text.toLowerCase().trim();
     const qv = this.normalize((await this.runInference(q, { pooling: 'mean', normalize: true })).data);
