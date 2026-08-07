@@ -53,9 +53,10 @@ function extractText(content: unknown): string | null {
 
 export function convertMcpTool(
   mcpTool: McpToolDefinition,
-  client: Client,
+  clientOrGetter: Client | (() => Promise<Client> | Client),
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): ReturnType<typeof tool> {
+  const getClient = typeof clientOrGetter === 'function' ? clientOrGetter : () => clientOrGetter;
   const zodSchema = mcpTool.inputSchema
     ? jsonSchemaToZod(mcpTool.inputSchema)
     : zObj.object({});
@@ -65,6 +66,7 @@ export function convertMcpTool(
     args: zodSchema instanceof zObj.ZodObject ? zodSchema.shape : {},
     async execute(args: Record<string, unknown>, _context: unknown) {
       try {
+        const client = await Promise.resolve(getClient());
         const result = await client.callTool(
           { name: mcpTool.name, arguments: args },
           CallToolResultSchema,

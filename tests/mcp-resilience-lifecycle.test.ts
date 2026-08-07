@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-import process from 'node:process';
 import { McpToolProvider } from '../src/mcp/mcp-tool-provider.js';
 import { ToolVault } from '../src/vault.js';
 import { ToolStore } from '../src/tool-store.js';
@@ -160,7 +159,8 @@ describe('MCP Resilience and Lifecycle', () => {
     });
 
     it('registers process exit listeners on MCP initialization', async () => {
-      const beforeExitSpy = vi.spyOn(process, 'once');
+      const proc = (globalThis as any).process;
+      const beforeExitSpy = vi.spyOn(proc, 'once');
 
       await ToolSearchPlugin(
         {} as any,
@@ -173,7 +173,6 @@ describe('MCP Resilience and Lifecycle', () => {
 
       expect(beforeExitSpy).toHaveBeenCalledWith('beforeExit', expect.any(Function));
       expect(beforeExitSpy).toHaveBeenCalledWith('exit', expect.any(Function));
-      beforeExitSpy.mockRestore();
     });
   });
 });

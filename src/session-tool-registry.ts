@@ -61,6 +61,16 @@ export class SessionToolRegistry {
     return this.authorization.registerTool(toolID);
   }
 
+  public registerProviderTools(tools: import('./tool-provider.js').ToolDefinition[]): void {
+    for (const tool of tools) {
+      if (tool.deferred !== false) {
+        this.authorization.registerTool(tool.id);
+      } else {
+        this.authorization.addAlwaysOn(tool.id);
+      }
+    }
+  }
+
   public get deferredCount(): number {
     return this.authorization.deferredCount;
   }

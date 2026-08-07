@@ -85,11 +85,7 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     mcpProvider
       .warmUp()
       .then(() => {
-        for (const t of mcpProvider!.getTools()) {
-          if (t.deferred !== false) {
-            sessionRegistry.registerTool(t.id);
-          }
-        }
+        sessionRegistry.registerProviderTools(mcpProvider!.getTools());
       })
       .catch((err: unknown) => {
         console.warn('[ToolSearchPlugin] Background MCP warm-up error:', err);
@@ -202,7 +198,6 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
         if (typeof sessionID === 'string' && sessionID.length > 0) {
           sessionRegistry.deleteSession(sessionID);
         }
-        await mcpProvider?.close();
         return;
       }
       if (event.type !== 'session.created' || updateStaged) return;

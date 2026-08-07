@@ -92,6 +92,11 @@ export class AuthorizationState {
     return deferred;
   }
 
+  public addAlwaysOn(toolID: string): void {
+    this.alwaysOn.add(toolID);
+    this.deferredTools.delete(toolID);
+  }
+
   public get deferredCount(): number {
     return this.deferredTools.size;
   }

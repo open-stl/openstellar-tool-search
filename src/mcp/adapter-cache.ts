@@ -1,6 +1,7 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { BaseServerConfig } from './types.js';
 import type { Transport } from './transport-factory.js';
+import { closeTransport } from './utils/close-transport.js';
 
 export interface ServerCacheEntry {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -59,7 +60,7 @@ export class AdapterCache {
     }
 
     this.cache.delete(key);
-    await this.closeTransport(cached.transport);
+    await closeTransport(cached.transport);
     return undefined;
   }
 
@@ -79,7 +80,7 @@ export class AdapterCache {
         const entry = this.cache.get(key);
         if (entry) {
           this.cache.delete(key);
-          await this.closeTransport(entry.transport);
+          await closeTransport(entry.transport);
         }
         throw error;
       } finally {
@@ -96,7 +97,7 @@ export class AdapterCache {
     const entry = this.cache.get(key);
     if (entry) {
       this.cache.delete(key);
-      await this.closeTransport(entry.transport);
+      await closeTransport(entry.transport);
     }
   }
 
@@ -106,7 +107,7 @@ export class AdapterCache {
     this.inFlight.clear();
     await Promise.all(
       entries.map(async (entry) => {
-        await this.closeTransport(entry.transport);
+        await closeTransport(entry.transport);
       }),
     );
   }
@@ -115,17 +116,9 @@ export class AdapterCache {
     const entries = Array.from(this.cache.values());
     await Promise.all(
       entries.map(async (entry) => {
-        await this.closeTransport(entry.transport);
+        await closeTransport(entry.transport);
       }),
     );
-  }
-
-  private async closeTransport(transport: Transport): Promise<void> {
-    try {
-      await Promise.resolve(transport.close());
-    } catch {
-      // best-effort cleanup
-    }
   }
 
   private async isAlive(entry: ServerCacheEntry): Promise<boolean> {

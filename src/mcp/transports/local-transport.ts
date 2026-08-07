@@ -3,6 +3,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { Stream } from 'node:stream';
 import type { LocalMcpServerConfig } from '../types.js';
 import type { Transport, TransportConnector } from '../transport-factory.js';
+import { closeTransport } from '../utils/close-transport.js';
 
 export const STDERR_CAPTURE_LIMIT_BYTES = 8192;
 
@@ -38,7 +39,7 @@ export class LocalTransportConnector implements TransportConnector<LocalMcpServe
       const message = err instanceof Error ? err.message : String(err);
       const trace = stderrTrace();
       const guidance = ' Enable OPENSTELLAR_MCP_DEBUG=true for diagnostics or set stderr: "inherit" for live child stderr.';
-      await this.closeTransport(transport);
+      await closeTransport(transport);
       throw new Error(`Failed to connect to local MCP server ${server.name}: ${message}.${guidance}${trace ? `\nStderr trace: ${trace}` : ''}`, { cause: err });
     }
   }
@@ -73,13 +74,5 @@ export class LocalTransportConnector implements TransportConnector<LocalMcpServe
     (stream as Stream).on('data', read);
 
     return () => Buffer.concat(retained, retainedBytes).toString('utf8') + (truncated ? '\n[stderr truncated]' : '');
-  }
-
-  private async closeTransport(transport: Transport): Promise<void> {
-    try {
-      await Promise.resolve(transport.close());
-    } catch {
-      // best-effort cleanup
-    }
   }
 }
