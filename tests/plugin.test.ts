@@ -813,4 +813,40 @@ describe('ToolSearchPlugin', () => {
       hooks['tool.execute.before']!({ tool: 'tool1', sessionID } as any, {} as any)
     ).resolves.not.toThrow();
   });
+
+  it('returns and authorizes both new tools and previously delivered but unauthorized tools', async () => {
+    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    await hooks['tool.definition']!({ toolID: 'tool_a' }, { description: 'Tool A', parameters: {} });
+    await hooks['tool.definition']!({ toolID: 'tool_b' }, { description: 'Tool B', parameters: {} });
+
+    const sessionID = 'mixed-delivery-session';
+    const searchTool = (hooks.tool as any).tool_search_regex;
+
+    // First search: deliver tool_a
+    const firstResult = await searchTool.execute({ pattern: '^tool_a$' }, { sessionID });
+    expect(firstResult).toContain('Found 1 tool(s)');
+    expect(firstResult).toContain('tool_a');
+
+    // Reset authorization for tool_a (e.g. compress)
+    await hooks['tool.execute.after']!({ tool: 'compress', sessionID, callID: 'c1' } as any, { output: 'compressed' } as any);
+
+    // Verify tool_a is unauthorized
+    await expect(
+      hooks['tool.execute.before']!({ tool: 'tool_a', sessionID } as any, {} as any)
+    ).rejects.toThrow();
+
+    // Now search pattern '^tool_' which matches tool_a (delivered, unauthorized) AND tool_b (new)
+    const secondResult = await searchTool.execute({ pattern: '^tool_' }, { sessionID });
+    expect(secondResult).toContain('Found 2 tool(s)');
+    expect(secondResult).toContain('tool_a');
+    expect(secondResult).toContain('tool_b');
+
+    // Verify both tool_a and tool_b are now authorized
+    await expect(
+      hooks['tool.execute.before']!({ tool: 'tool_a', sessionID } as any, {} as any)
+    ).resolves.not.toThrow();
+    await expect(
+      hooks['tool.execute.before']!({ tool: 'tool_b', sessionID } as any, {} as any)
+    ).resolves.not.toThrow();
+  });
 });

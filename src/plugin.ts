@@ -1,10 +1,9 @@
 import type { Hooks, Plugin, PluginInput, PluginOptions } from '@opencode-ai/plugin';
 import { tool } from '@opencode-ai/plugin';
 import { ToolVault } from './vault.js';
-import type { ToolMeta, ToolSearchConfig } from './types.js';
+import type { ToolSearchConfig, EmbedConfig } from './types.js';
 import { checkForUpdate, formatUpdateMessage } from './hooks/auto-update-checker.js';
-import { AuthorizationState } from './authorization-state.js';
-import { DeliveryHistory, computeFingerprint } from './delivery-history.js';
+import { SessionToolRegistry } from './session-tool-registry.js';
 
 const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
 const DEFAULT_DEFER = '[deferred]';
@@ -47,68 +46,30 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
   const maxResults = opts.searchLimit ?? 10;
   const deferLabel = opts.deferDescription ?? DEFAULT_DEFER;
   const searchTimeoutMs = opts.searchTimeoutMs ?? 2000;
-  const embedding = opts.embedding
-    ? { useWorker: true, ...opts.embedding }
-    : { enabled: true, useWorker: true };
+  const embeddingCfg: Partial<EmbedConfig> = opts.embedding ?? {};
+  const embedding = {
+    enabled: embeddingCfg.enabled ?? true,
+    ...embeddingCfg,
+    quantized: embeddingCfg.quantized ?? false,
+    useWorker: embeddingCfg.useWorker ?? true,
+  };
   const vault = new ToolVault({
     k1: opts.bm25?.k1,
     b: opts.bm25?.b,
+    cascadeThreshold: opts.bm25?.cascadeThreshold,
     embedding,
   });
-  const authorization = new AuthorizationState({
+  const sessionRegistry = new SessionToolRegistry({
     alwaysOn: [...SEARCH_IDS, ...(opts.alwaysLoad ?? [])],
     resetTools: resetToolIDs,
   });
-  const deliveryHistory = new DeliveryHistory();
   let deferrals = 0;
   let total = 0;
   let alerted = false;
   let updateCheckInFlight: Promise<void> | null = null;
   let updateStaged = false;
 
-  const formatHit = (r: ToolMeta) => {
-    const paramsInfo = r.parameters && typeof r.parameters === 'object' && Object.keys(r.parameters).length > 0 ? `\n  parameters: ${JSON.stringify(r.parameters)}` : '';
-    return `${r.id}: ${r.description}${paramsInfo}`;
-  };
-
-  /** Format a No-Op Discovery response (rule 36). */
-  const formatNoOpDiscovery = (deliveredHits: ToolMeta[]): string => {
-    const names = deliveredHits.map((h) => h.id).join(', ');
-    return `No new tools discovered. Previously delivered: ${names}.`;
-  };
-
   setTimeout(() => toast(ctx, 'Tool Search', 'Active — tools will be deferred on first prompt.', 'info', 4000), 3000);
-
-  /** Shared delivery-history filter + authorization gate (extracted from both tool_search and tool_search_regex). */
-  const applyDeliveryFilter = (
-    sessionID: string | undefined,
-    allHits: ToolMeta[],
-  ): { type: 'no-op' | 're-auth' | 'new'; result: string } | null => {
-    const sid = sessionID ?? '';
-    const { new: newHits, delivered: deliveredHits } = deliveryHistory.filterNewDiscoveries(sid, allHits);
-
-    // If only delivered results remain and all are still authorized, return no-op message.
-    if (newHits.length === 0 && deliveredHits.length > 0) {
-      const allAuthorized = deliveredHits.every((hit) =>
-        authorization.isAuthorized(sid, hit.id),
-      );
-      if (allAuthorized) {
-        return { type: 'no-op', result: formatNoOpDiscovery(deliveredHits) };
-      }
-      const unauthorizedHits = deliveredHits
-        .filter((hit) => !authorization.isAuthorized(sid, hit.id))
-        .slice(0, maxResults);
-      authorization.authorize(sid, unauthorizedHits);
-      return { type: 're-auth', result: `Found ${unauthorizedHits.length} tool(s):\n\n${unauthorizedHits.map(formatHit).join('\n\n')}` };
-    }
-
-    const limitedNew = newHits.slice(0, maxResults);
-    authorization.authorize(sid, limitedNew);
-    for (const hit of limitedNew) {
-      deliveryHistory.recordDelivered(sid, hit.id, computeFingerprint(hit));
-    }
-    return { type: 'new', result: `Found ${limitedNew.length} tool(s):\n\n${limitedNew.map(formatHit).join('\n\n')}` };
-  };
 
   const hooks: Hooks = {
     tool: {
@@ -120,9 +81,8 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
           const allHits = await vault.query(args.query, vault.count || maxResults, searchTimeoutMs);
           if (allHits.length === 0) return `No matches for "${args.query}". Try broader terms or tool_search_regex.`;
 
-          const filterResult = applyDeliveryFilter(sessionID, allHits);
-          if (filterResult) return filterResult.result;
-          return `Found 0 tool(s).`;
+          const processing = sessionRegistry.processSearchResult(sessionID, allHits, maxResults);
+          return processing.responseText;
         },
       }),
       tool_search_regex: tool({
@@ -130,28 +90,18 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
         args: { pattern: tool.schema.string().describe('Case-insensitive regex for tool IDs and descriptions.') },
         async execute(args, context) {
           const sessionID = context?.sessionID;
-          let allHits = vault.grep(args.pattern, vault.count || maxResults);
-          if (allHits.length === 0 && args.pattern.includes('_ide')) {
-            const ideStrippedPattern = args.pattern.replace(/(_ide)(\$?)$/, '$2');
-            if (ideStrippedPattern !== args.pattern && /[a-zA-Z0-9]/.test(ideStrippedPattern)) {
-              const aliasHits = vault.grep(ideStrippedPattern, vault.count || maxResults);
-              for (const hit of aliasHits) {
-                if (!allHits.some((h) => h.id === hit.id)) allHits.push(hit);
-              }
-            }
-          }
+          const allHits = vault.grep(args.pattern, vault.count || maxResults);
           if (allHits.length === 0) return `No tools matched pattern "${args.pattern}".`;
 
-          const filterResult = applyDeliveryFilter(sessionID, allHits);
-          if (filterResult) return filterResult.result;
-          return `Found 0 tool(s).`;
+          const processing = sessionRegistry.processSearchResult(sessionID, allHits, maxResults);
+          return processing.responseText;
         },
       }),
     },
     'tool.definition': async (input, output) => {
       if (SEARCH_IDS.has(input.toolID)) return;
       vault.add(input.toolID, output.description, output.parameters);
-      if (authorization.registerTool(input.toolID)) {
+      if (sessionRegistry.registerTool(input.toolID)) {
         const firstSentence = getFirstSentence(output.description);
         output.description = firstSentence ? `${firstSentence} ${deferLabel}` : deferLabel;
       }
@@ -161,27 +111,22 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
       const meta = vault.resolveAlias(input.tool);
       const canonical = meta?.id ?? input.tool;
       const sessionID = input.sessionID ?? 'default';
-      if (authorization.requiresReminder(input.sessionID, input.tool, canonical)) {
+      if (sessionRegistry.requiresReminder(input.sessionID, input.tool, canonical)) {
         throw new Error(
           `[Tool Search Required] Tool "${input.tool}" has not been searched in session "${sessionID}". Call tool_search_regex({ pattern: "^${canonical}$" }) or tool_search to inspect full description and parameter schema before calling this tool.`,
         );
       }
     },
     'tool.execute.after': async (input, output) => {
-      if (authorization.resetIfConfigured(input.tool, input.sessionID)) {
+      if (sessionRegistry.resetIfConfigured(input.tool, input.sessionID)) {
         output.output = `${String(output.output ?? '')}\n\n[Tool Search] Deferred tool authorizations have been reset — search for any tools you need to use.`;
         return;
       }
     },
     'experimental.chat.system.transform': async (input, output) => {
       total = vault.count;
-      deferrals = authorization.deferredCount;
+      deferrals = sessionRegistry.deferredCount;
 
-      // Warm the semantic index in the background so the FIRST tool_search
-      // call does not pay the full @xenova/transformers model-download +
-      // ONNX init cost (~5-10s on cold cache). Errors are surfaced via
-      // toast so users can diagnose network restrictions instead of
-      // seeing a silent fallback to BM25.
       const buildPromise = embedding.useWorker ? vault.prebuildSemantic() : undefined;
       if (buildPromise) {
         buildPromise.catch((err: unknown) => {
@@ -201,16 +146,14 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
       }
     },
     'experimental.session.compacting': async (input, output) => {
-      authorization.resetSession(input.sessionID);
-      deliveryHistory.clear(input.sessionID);
+      sessionRegistry.compactSession(input.sessionID);
       output.context.push('[Tool Search] Session compacted. Deferred tool authorizations have been reset — search for any tools you need to use.');
     },
     event: async ({ event }) => {
       if (event.type === 'session.deleted') {
         const sessionID = (event.properties as { sessionID?: unknown } | undefined)?.sessionID;
         if (typeof sessionID === 'string' && sessionID.length > 0) {
-          authorization.resetSession(sessionID);
-          deliveryHistory.clear(sessionID);
+          sessionRegistry.deleteSession(sessionID);
         }
         return;
       }

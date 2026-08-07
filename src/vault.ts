@@ -32,7 +32,7 @@ export class ToolVault {
 
   constructor(cfg: Partial<ScoreParams & { embedding?: EmbedConfig }> = {}) {
     this.scorerCfg = { k1: cfg.k1 ?? 0.9, b: cfg.b ?? 0.4 };
-    this.cascadeThreshold = cfg.cascadeThreshold ?? 4.5;
+    this.cascadeThreshold = cfg.cascadeThreshold ?? 1.0;
     this.scorer = new RankEngine<ToolMeta>(this.scorerCfg.k1, this.scorerCfg.b);
     if (cfg.embedding?.enabled) this.semantic = new SemanticMatcher(cfg.embedding);
   }
@@ -74,6 +74,8 @@ export class ToolVault {
     let build: Promise<void>;
     build = this.semantic.index(indexed).then(() => {
       if (this.semanticGeneration === generation) this.semanticStale = false;
+    }).catch(() => {
+      // Background index build failure — fail open, leave semanticStale true for retry
     }).finally(() => {
       if (this.semanticBuildPromise === build) this.semanticBuildPromise = undefined;
     });
@@ -121,6 +123,13 @@ export class ToolVault {
       : 0;
     if (topScore >= this.cascadeThreshold) return bm25Hits;
 
+    // If semantic index is cold/loading and BM25 already has results, return BM25 immediately
+    // without waiting for timeoutMs, allowing prewarming to finish in background.
+    if (!this.isSemanticReady && bm25Hits.length > 0) {
+      this.prebuildSemantic();
+      return bm25Hits;
+    }
+
     // 4. Semantic fallback with RRF fusion. If `timeoutMs > 0`, race the
     //    build+inference against a timer — on timeout, return BM25
     //    immediately and let the background build continue.
@@ -135,8 +144,8 @@ export class ToolVault {
         const semanticScores = await this.semantic.locate(text);
         if (semanticScores.size > 0) return this.fuseRRF(bm25Hits, semanticScores, limit);
       }
-    } catch (err) {
-      console.warn('[tool-search] Embedding search failed, falling back to BM25:', err);
+    } catch {
+      // Internal recoverable error — fail open to BM25 without logging
     }
     return bm25Hits;
   }
@@ -164,8 +173,7 @@ export class ToolVault {
         const semanticScores = await this.semantic!.locate(text);
         if (semanticScores.size > 0) return this.fuseRRF(bm25Hits, semanticScores, limit);
         return bm25Hits;
-      } catch (err) {
-        console.warn('[tool-search] Embedding search failed, falling back to BM25:', err);
+      } catch {
         return bm25Hits;
       }
     })();
@@ -232,6 +240,15 @@ export class ToolVault {
       if (matchesId || matchesDesc) {
         hits.push(item);
         if (hits.length >= limit) break;
+      }
+    }
+    if (hits.length === 0 && pattern.includes('_ide')) {
+      const ideStrippedPattern = pattern.replace(/(_ide)(\$?)$/, '$2');
+      if (ideStrippedPattern !== pattern && /[a-zA-Z0-9]/.test(ideStrippedPattern)) {
+        const aliasHits = this.grep(ideStrippedPattern, limit);
+        for (const hit of aliasHits) {
+          if (!hits.some((h) => h.id === hit.id)) hits.push(hit);
+        }
       }
     }
     return hits;

@@ -93,7 +93,7 @@ describe('ToolVault', () => {
 
     expect(v.queryBM25('retryPolicy', 5)[0].id).toBe('configure');
     const lexicalText = (feed.mock.calls[0][1])(v.list()[0]).join(' ');
-    await v.query('Destination URL', 5);
+    await v.prebuildSemantic();
     const semanticText = index.mock.calls[0][0][0].text;
 
     expect(semanticText).toBe(lexicalText);
@@ -120,14 +120,14 @@ describe('ToolVault', () => {
     v.add('grep', 'Search files', {});
 
     expect(v.grep('^read$', 5).map((tool) => tool.id)).toEqual(['read']);
-    expect(v.grep('^read_ide$', 5)).toEqual([]);
+    expect(v.grep('^read_ide$', 5).map((tool) => tool.id)).toEqual(['read']);
 
     v.add('foo', 'Canonical foo', {});
     v.add('foo_ide', 'Real runtime tool', {});
     expect(v.grep('^foo_ide$', 5).map((tool) => tool.id)).toEqual(['foo_ide']);
     expect(v.get('foo')).toMatchObject({ id: 'foo' });
     expect(v.get('foo_ide')).toMatchObject({ id: 'foo_ide' });
-    expect(v.grep('^foo_ide_ide$', 5)).toEqual([]);
+    expect(v.grep('^foo_ide_ide$', 5).map((tool) => tool.id)).toEqual(['foo_ide']);
   });
 
   it('does not index synthesized aliases', () => {
@@ -182,11 +182,12 @@ describe('ToolVault', () => {
       .mockResolvedValue(new Map([['test', 0.95]]));
     const index = vi.spyOn(SemanticMatcher.prototype, 'index')
       .mockReturnValue(build.promise);
-    const v = new ToolVault({ embedding: { enabled: true } });
+    const v = new ToolVault({ embedding: { enabled: true }, cascadeThreshold: 100 });
     v.add('test', 'A test tool', {});
 
-    const first = v.query('test', 5);
-    const second = v.query('test', 5);
+    const buildPromise = v.prebuildSemantic()!;
+    const first = v.query('unmatched', 5);
+    const second = v.query('unmatched', 5);
     await Promise.resolve();
     expect(index).toHaveBeenCalledTimes(1);
     expect(locate).not.toHaveBeenCalled();
@@ -194,6 +195,7 @@ describe('ToolVault', () => {
     expect(await Promise.race([second.then(() => 'settled'), Promise.resolve('pending')])).toBe('pending');
 
     build.resolve();
+    await buildPromise;
     await Promise.all([first, second]);
     expect(locate).toHaveBeenCalledTimes(2);
   });
@@ -204,15 +206,18 @@ describe('ToolVault', () => {
       .mockReturnValueOnce(firstBuild.promise)
       .mockResolvedValue(undefined);
     vi.spyOn(SemanticMatcher.prototype, 'locate').mockResolvedValue(new Map());
-    const v = new ToolVault({ embedding: { enabled: true } });
+    const v = new ToolVault({ embedding: { enabled: true }, cascadeThreshold: 100 });
     v.add('first', 'First tool', {});
 
-    const query = v.query('first', 5);
+    const buildPromise = v.prebuildSemantic()!;
+    const query = v.query('unmatched', 5);
     await Promise.resolve();
     v.add('second', 'Second tool', {});
     firstBuild.resolve();
+    await buildPromise;
     await query;
-    await v.query('second', 5);
+    await v.prebuildSemantic();
+    await v.query('unmatched', 5);
     expect(index).toHaveBeenCalledTimes(2);
     expect(index.mock.calls[1][0].map((entry) => entry.id)).toEqual(['first', 'second']);
   });
@@ -223,14 +228,35 @@ describe('ToolVault', () => {
       .mockReturnValueOnce(failure.promise)
       .mockResolvedValue(undefined);
     vi.spyOn(SemanticMatcher.prototype, 'locate').mockResolvedValue(new Map());
-    const v = new ToolVault({ embedding: { enabled: true } });
+    const v = new ToolVault({ embedding: { enabled: true }, cascadeThreshold: 100 });
     v.add('read', 'Read a file', {});
 
-    const first = v.query('file', 5);
+    const buildPromise = v.prebuildSemantic()!;
+    const first = v.query('unmatched', 5);
     failure.reject(new Error('controlled failure'));
-    await expect(first).resolves.toEqual([expect.objectContaining({ id: 'read' })]);
-    await v.query('file', 5);
+    await buildPromise.catch(() => {});
+    await expect(first).resolves.toEqual([]);
+    await v.prebuildSemantic();
+    await v.query('unmatched', 5);
     expect(index).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not log console.warn or console.error when embedding search fails or times out', async () => {
+    const spyWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const spyError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    vi.spyOn(SemanticMatcher.prototype, 'index').mockRejectedValue(new Error('controlled failure'));
+
+    const v = new ToolVault({ embedding: { enabled: true }, cascadeThreshold: 10.0 });
+    v.add('read', 'Read a file', {});
+
+    const res = await v.query('file', 5, 50);
+    expect(res).toEqual([expect.objectContaining({ id: 'read' })]);
+    expect(spyWarn).not.toHaveBeenCalled();
+    expect(spyError).not.toHaveBeenCalled();
+
+    spyWarn.mockRestore();
+    spyError.mockRestore();
   });
 
   it('skips semantic search when BM25 returns high confidence match (fast-path cascade)', async () => {
@@ -304,6 +330,7 @@ describe('ToolVault', () => {
       const v = new ToolVault({ embedding: { enabled: true }, cascadeThreshold: 100 });
       v.add('read_file', 'Reads contents from disk', {});
 
+      v.prebuildSemantic();
       const start = Date.now();
       const res = await v.query('read', 5, 50); // 50ms timeout
       const elapsed = Date.now() - start;
@@ -321,6 +348,7 @@ describe('ToolVault', () => {
       const v = new ToolVault({ embedding: { enabled: true }, cascadeThreshold: 100 });
       v.add('git_commit', 'Creates a commit', {});
       v.add('read_file', 'Reads file contents', {});
+      await v.prebuildSemantic();
 
       const res = await v.query('file', 5, 1000);
       expect(res.map((r) => r.id)).toContain('read_file');
@@ -333,9 +361,21 @@ describe('ToolVault', () => {
         .mockResolvedValue(new Map());
       const v = new ToolVault({ embedding: { enabled: true }, cascadeThreshold: 100 });
       v.add('read_file', 'Reads file contents', {});
+      await v.prebuildSemantic();
 
       await v.query('file', 5, 0); // explicit 0 = no timeout
       expect(locate).toHaveBeenCalled();
+    });
+  });
+
+  describe('grep with _ide alias fallback', () => {
+    it('falls back to stripped pattern when _ide suffix query has no direct matches', () => {
+      const v = new ToolVault();
+      v.add('github_create_issue', 'Creates a new GitHub issue', {});
+      v.add('github_create_pr', 'Creates a pull request', {});
+
+      const hits = v.grep('github_create_issue_ide$', 10);
+      expect(hits.map((h) => h.id)).toContain('github_create_issue');
     });
   });
 });

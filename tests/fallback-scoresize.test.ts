@@ -23,13 +23,15 @@ describe('B5: scores.size === 0 → BM25 fallback', () => {
   it('forces matcher to return EMPTY Map → BM25 still produces github_create_issue', async () => {
     // Spy on SemanticMatcher.prototype.locate and force it to return empty Map
     const spy = vi.spyOn(SemanticMatcher.prototype, 'locate').mockResolvedValue(new Map());
+    vi.spyOn(SemanticMatcher.prototype, 'index').mockResolvedValue(undefined);
 
     const ctx: any = { client: { tui: { showToast: vi.fn().mockResolvedValue(undefined) } }, project: {}, directory: '/tmp', worktree: '/tmp', experimental_workspace: { register: vi.fn() }, serverUrl: new URL('http://localhost'), $: {} };
     const toolCtx = { sessionID: 's', messageID: 'm', agent: 'a', directory: '/tmp', worktree: '/tmp', abort: new AbortController().signal, metadata: vi.fn(), ask: vi.fn().mockResolvedValue(undefined) };
 
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: true, model: 'Xenova/all-MiniLM-L6-v2' } } as any);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { bm25: { cascadeThreshold: 100 }, embedding: { enabled: true, model: 'Xenova/all-MiniLM-L6-v2' } } as any);
     const def = hooks['tool.definition']!;
     for (const t of FIX) await def({ toolID: t.id }, { description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) });
+    await hooks['experimental.chat.system.transform']!({} as any, { system: [] });
     const tSearch = (hooks.tool as any).tool_search;
 
     // Spy was called on the prototype, so ALL SemanticMatcher instances will return empty

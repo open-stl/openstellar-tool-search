@@ -63,7 +63,7 @@ export interface EmbedConfig {
 /** Build the `{ quantized?, dtype? }` shape for the ONNX pipeline. */
 export function pipelineOptions(cfg: Pick<EmbedConfig, 'quantized' | 'dtype'>): { quantized?: boolean; dtype?: string } {
   const opts: { quantized?: boolean; dtype?: string } = {};
-  if (cfg.quantized !== undefined) opts.quantized = cfg.quantized;
+  opts.quantized = cfg.quantized ?? false;
   if (cfg.dtype !== undefined) opts.dtype = cfg.dtype;
   return opts;
 }

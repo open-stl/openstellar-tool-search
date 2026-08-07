@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import process, { env } from 'node:process';
 import type { ToolMeta } from './types.js';
+import { writeJsonAtomic } from './utils/atomic-write.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -117,8 +118,8 @@ export class DeliveryHistoryPersistence {
           result.set(sessionID, sessionMap);
         }
       }
-    } catch (err) {
-      console.warn(`[Tool Search] Warning: Failed to load delivery history from ${this.filePath}:`, err);
+    } catch {
+      // Load failure - silent fallback
     }
 
     return result;
@@ -168,25 +169,9 @@ export class DeliveryHistoryPersistence {
           }
         }
 
-        const dir = dirname(this.filePath);
-        if (!existsSync(dir)) {
-          mkdirSync(dir, { recursive: true });
-        }
-
-        const content = JSON.stringify(payload, null, 2);
-        const tmpPath = `${this.filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
-
-        writeFileSync(tmpPath, content, 'utf-8');
-        try {
-          renameSync(tmpPath, this.filePath);
-        } catch {
-          writeFileSync(this.filePath, content, 'utf-8');
-          try {
-            if (existsSync(tmpPath)) unlinkSync(tmpPath);
-          } catch {}
-        }
-      } catch (err) {
-        console.warn(`[Tool Search] Warning: Failed to write delivery history to ${this.filePath}:`, err);
+        writeJsonAtomic(this.filePath, payload);
+      } catch {
+        // Write failure - silent fallback
       }
     };
 
@@ -224,30 +209,14 @@ export class DeliveryHistoryPersistence {
         for (const [canonicalID, fingerprint] of sessionMap.entries()) {
           entries.push({ canonicalID, fingerprint });
         }
-        if (entries.length > 0) {
-          payload[sessionID] = entries;
-        }
+      if (entries.length > 0) {
+        payload[sessionID] = entries;
       }
+    }
 
-      const dir = dirname(this.filePath);
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
-
-      const content = JSON.stringify(payload, null, 2);
-      const tmpPath = `${this.filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
-
-      writeFileSync(tmpPath, content, 'utf-8');
-      try {
-        renameSync(tmpPath, this.filePath);
-      } catch {
-        writeFileSync(this.filePath, content, 'utf-8');
-        try {
-          if (existsSync(tmpPath)) unlinkSync(tmpPath);
-        } catch {}
-      }
-    } catch (err) {
-      console.warn(`[Tool Search] Warning: Failed to write delivery history to ${this.filePath}:`, err);
+    writeJsonAtomic(this.filePath, payload);
+  } catch {
+      // Write failure - silent fallback
     }
   }
 }

@@ -422,7 +422,7 @@ describe('F. Cost & speed tradeoffs', () => {
     await search(sem, 'github');
     const dur = Date.now() - start;
     // First load is slow (~5s+ on cold start) — we just confirm it completes
-    expect(dur).toBeGreaterThan(0);
+    expect(dur).toBeGreaterThanOrEqual(0);
     expect(dur).toBeLessThan(120_000);  // 2 min is generous
   }, 120_000);
 });

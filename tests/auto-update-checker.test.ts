@@ -66,11 +66,28 @@ describe('auto-update-checker : checkForUpdate lifecycle', () => {
         return { result, invalidations };
     };
 
-    it('returns false for nonexistent, mixed, and failed filesystem targets', () => {
-        expect(invalidatePackageCache(['/cache'], { existsSync: () => false, rmSync: vi.fn() })).toBe(false);
+    it('returns true when target cache directories do not exist on disk', () => {
+        expect(invalidatePackageCache(['/cache'], { existsSync: () => false, rmSync: vi.fn() })).toBe(true);
+    });
+
+    it('returns false for failed filesystem targets', () => {
         expect(invalidatePackageCache(['/cache'], { existsSync: () => true, rmSync: () => { throw new Error('remove failed'); } })).toBe(false);
         let calls = 0;
         expect(invalidatePackageCache(['/cache', '/cache-2'], { existsSync: () => true, rmSync: () => { calls += 1; if (calls === 2) throw new Error('remove failed'); } })).toBe(false);
+    });
+
+    it('returns update-staged when a newer version is available and cache directories do not exist initially', async () => {
+        const result = await checkForUpdate({
+            getCurrentVersion: () => '1.0.0',
+            getLatestVersion: async () => '1.0.1',
+            invalidatePackageCache: () => invalidatePackageCache(['/cache'], { existsSync: () => false, rmSync: vi.fn() }),
+        });
+
+        expect(result).toEqual({
+            outcome: 'update-staged',
+            currentVersion: '1.0.0',
+            latestVersion: '1.0.1',
+        });
     });
 
     it('returns check-failed when getCurrentVersion throws', async () => {

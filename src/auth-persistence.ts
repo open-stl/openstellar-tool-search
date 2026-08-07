@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import process, { env } from 'node:process';
+import { writeJsonAtomic } from './utils/atomic-write.js';
 
 export interface CanonicalToolAuthorization {
   kind: 'canonical-tool';
@@ -81,7 +82,6 @@ export class AuthPersistence {
       }
       const data = JSON.parse(content) as PersistedAuthMap;
       if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-        console.warn(`[Tool Search] Warning: Invalid persistence format in ${this.filePath}`);
         return { authorizations, lastSeen };
       }
 
@@ -109,8 +109,8 @@ export class AuthPersistence {
         }
         this.knownSessions.add(sessionID);
       }
-    } catch (err) {
-      console.warn(`[Tool Search] Warning: Failed to load authorization state from ${this.filePath}:`, err);
+    } catch {
+      // Load failure - silent fallback
     }
 
     return { authorizations, lastSeen };
@@ -214,26 +214,9 @@ export class AuthPersistence {
           }
         }
 
-        const dir = dirname(this.filePath);
-        if (!existsSync(dir)) {
-          mkdirSync(dir, { recursive: true });
-        }
-
-        const content = JSON.stringify(mergedPayload, null, 2);
-        const tmpPath = `${this.filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
-
-        writeFileSync(tmpPath, content, 'utf-8');
-        try {
-          renameSync(tmpPath, this.filePath);
-        } catch {
-          // Fallback if atomic rename across mounts or windows locks fails
-          writeFileSync(this.filePath, content, 'utf-8');
-          try {
-            if (existsSync(tmpPath)) unlinkSync(tmpPath);
-          } catch {}
-        }
-      } catch (err) {
-        console.warn(`[Tool Search] Warning: Failed to write authorization state to ${this.filePath}:`, err);
+        writeJsonAtomic(this.filePath, mergedPayload);
+      } catch {
+        // Write failure - silent fallback
       }
     };
 
@@ -302,25 +285,9 @@ export class AuthPersistence {
         }
       }
 
-      const dir = dirname(this.filePath);
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
-
-      const content = JSON.stringify(mergedPayload, null, 2);
-      const tmpPath = `${this.filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
-
-      writeFileSync(tmpPath, content, 'utf-8');
-      try {
-        renameSync(tmpPath, this.filePath);
-      } catch {
-        writeFileSync(this.filePath, content, 'utf-8');
-        try {
-          if (existsSync(tmpPath)) unlinkSync(tmpPath);
-        } catch {}
-      }
-    } catch (err) {
-      console.warn(`[Tool Search] Warning: Failed to write authorization state to ${this.filePath}:`, err);
+      writeJsonAtomic(this.filePath, mergedPayload);
+    } catch {
+      // Write failure - silent fallback
     }
   }
 }

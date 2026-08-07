@@ -148,10 +148,7 @@ describe('AuthPersistence (Unit Tests)', () => {
 
     expect(authorizations.size).toBe(0);
     expect(lastSeen.size).toBe(0);
-    expect(spyWarn).toHaveBeenCalledWith(
-      expect.stringContaining('[Tool Search] Warning: Failed to load authorization state from'),
-      expect.any(Error),
-    );
+    expect(spyWarn).not.toHaveBeenCalled();
     spyWarn.mockRestore();
   });
 
@@ -176,7 +173,7 @@ describe('AuthPersistence (Unit Tests)', () => {
     });
   });
 
-  it('fails open log warning on write error', async () => {
+  it('fails open silently on write error', async () => {
     // Provide a file path inside a file (directory creation will fail)
     const invalidPath = join(testFilePath, 'sub', 'file.json');
     writeFileSync(testFilePath, 'blocking-file', 'utf-8');
@@ -186,10 +183,7 @@ describe('AuthPersistence (Unit Tests)', () => {
     ap.save(new Map([['s1', new Set(['t1'])]]), new Map([['s1', Date.now()]]));
 
     await expect(ap.flush()).resolves.toBeUndefined();
-    expect(spyWarn).toHaveBeenCalledWith(
-      expect.stringContaining('[Tool Search] Warning: Failed to write authorization state to'),
-      expect.any(Error),
-    );
+    expect(spyWarn).not.toHaveBeenCalled();
     spyWarn.mockRestore();
   });
 

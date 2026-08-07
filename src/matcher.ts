@@ -46,8 +46,9 @@ export class SemanticMatcher {
     const name = this.cfg.model ?? DEFAULT_MODEL;
     const hasher = crypto.createHash('sha256');
     hasher.update(name);
-    if (this.cfg.quantized !== undefined) hasher.update(`:q=${this.cfg.quantized}`);
-    if (this.cfg.dtype !== undefined) hasher.update(`:dtype=${this.cfg.dtype}`);
+    const popts = pipelineOptions(this.cfg);
+    if (popts.quantized !== undefined) hasher.update(`:q=${popts.quantized}`);
+    if (popts.dtype !== undefined) hasher.update(`:dtype=${popts.dtype}`);
     for (const e of entries) {
       hasher.update(`:${e.id}:${e.text}`);
     }
@@ -124,6 +125,7 @@ export class SemanticMatcher {
 
       try {
         this.worker = new Worker(workerUrl);
+        this.worker.unref();
       } catch (err) {
         this.loadError = err instanceof Error ? err : new Error(String(err));
         this.workerInitFailed = true;
@@ -199,11 +201,15 @@ export class SemanticMatcher {
 
   private async doLoad(): Promise<void> {
     try {
-      const mod = await import('@xenova/transformers');
+      const { env, pipeline } = await import('@xenova/transformers');
+      (env as Record<string, unknown>).logLevel = 'error';
+      if (env.backends?.onnx) {
+        env.backends.onnx.logLevel = 'error';
+      }
       const name = this.cfg.model ?? DEFAULT_MODEL;
       const opts = pipelineOptions(this.cfg);
 
-      this.model = (await mod.pipeline('feature-extraction', name, Object.keys(opts).length > 0 ? opts : undefined)) as unknown as ModelPipeline;
+      this.model = (await pipeline('feature-extraction', name, Object.keys(opts).length > 0 ? opts : undefined)) as unknown as ModelPipeline;
     } catch (e) {
       this.loadError = e as Error;
       this.loadPromise = null;
@@ -306,9 +312,11 @@ export class SemanticMatcher {
             this.vectors.set(chunk[k].id, this.normalize(rawVec));
           }
         } catch (err) {
-          for (const item of chunk) {
-            await this.indexOne(item.id, item.text);
+          this.loadError = err instanceof Error ? err : new Error(String(err));
+          for (let j = i; j < validEntries.length; j++) {
+            this.vectors.set(validEntries[j].id, new Float32Array(this.dims));
           }
+          break;
         }
       }
     }
@@ -321,9 +329,7 @@ export class SemanticMatcher {
       const dir = path.dirname(cacheFilePath);
       fs.promises.mkdir(dir, { recursive: true })
         .then(() => fs.promises.writeFile(cacheFilePath, JSON.stringify(obj), 'utf-8'))
-        .catch((err) => {
-          console.warn('[tool-search] Vector disk cache save failed:', err);
-        });
+        .catch(() => {});
     }
   }
 
@@ -341,24 +347,29 @@ export class SemanticMatcher {
     if (!text.trim() || this.vectors.size === 0) return new Map();
     if (!this.active) return new Map();
 
-    const q = text.toLowerCase().trim();
-    const qv = this.normalize((await this.runInference(q, { pooling: 'mean', normalize: true })).data);
-    const baseThreshold = this.cfg.threshold ?? 0.3;
+    try {
+      const q = text.toLowerCase().trim();
+      const qv = this.normalize((await this.runInference(q, { pooling: 'mean', normalize: true })).data);
+      const baseThreshold = this.cfg.threshold ?? 0.3;
 
-    const sweep = (minScore: number): Map<string, number> => {
-      const out = new Map<string, number>();
-      for (const [id, vec] of this.vectors) {
-        const score = this.cosine(qv, vec);
-        if (score >= minScore) out.set(id, score);
+      const sweep = (minScore: number): Map<string, number> => {
+        const out = new Map<string, number>();
+        for (const [id, vec] of this.vectors) {
+          const score = this.cosine(qv, vec);
+          if (score >= minScore) out.set(id, score);
+        }
+        return out;
+      };
+
+      const results = sweep(baseThreshold);
+      if (results.size < 2) {
+        const relaxed = sweep(baseThreshold * 0.7);
+        return relaxed.size > 0 ? relaxed : results;
       }
-      return out;
-    };
-
-    const results = sweep(baseThreshold);
-    if (results.size < 2) {
-      const relaxed = sweep(baseThreshold * 0.7);
-      return relaxed.size > 0 ? relaxed : results;
+      return results;
+    } catch (err) {
+      this.loadError = err instanceof Error ? err : new Error(String(err));
+      return new Map();
     }
-    return results;
   }
 }

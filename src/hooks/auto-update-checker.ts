@@ -100,7 +100,6 @@ export function invalidatePackageCache(
     effects: CacheInvalidationEffects = defaultCacheInvalidationEffects,
 ): boolean {
     const seen = new Set<string>();
-    let removed = false;
     let removalFailed = false;
 
     for (const root of cacheRoots) {
@@ -117,13 +116,12 @@ export function invalidatePackageCache(
             if (!exists) continue;
             try {
                 effects.rmSync(target, { recursive: true, force: true });
-                removed = true;
             } catch {
                 removalFailed = true;
             }
         }
     }
-    return removed && !removalFailed;
+    return !removalFailed;
 }
 
 export function isNewerVersion(latest: string, current: string): boolean {
