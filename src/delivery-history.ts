@@ -65,7 +65,7 @@ export class DeliveryHistoryPersistence {
   private debounceMs: number;
   private timer: NodeJS.Timeout | null = null;
   private pendingData: Map<string, Map<string, string>> | null = null;
-  private lastMemoryState: Map<string, Map<string, string>> | null = null;
+  private trackedSessions = new Set<string>();
   private writePromise: Promise<void> | null = null;
 
   constructor(options: DeliveryHistoryPersistenceOptions = {}) {
@@ -117,6 +117,7 @@ export class DeliveryHistoryPersistence {
         }
         if (sessionMap.size > 0) {
           result.set(sessionID, sessionMap);
+          this.trackedSessions.add(sessionID);
         }
       }
     } catch {
@@ -127,10 +128,12 @@ export class DeliveryHistoryPersistence {
   }
 
   public save(history: Map<string, Map<string, string>>): void {
-    this.lastMemoryState = new Map(
+    this.pendingData = new Map(
       Array.from(history.entries()).map(([k, v]) => [k, new Map(v)]),
     );
-    this.pendingData = this.lastMemoryState;
+    for (const key of history.keys()) {
+      this.trackedSessions.add(key);
+    }
 
     if (this.timer) {
       clearTimeout(this.timer);
@@ -169,11 +172,9 @@ export class DeliveryHistoryPersistence {
             payload = {};
           }
         }
-        if (this.lastMemoryState) {
-          for (const sessionID of Object.keys(payload)) {
-            if (!this.lastMemoryState.has(sessionID)) {
-              delete payload[sessionID];
-            }
+        for (const sessionID of this.trackedSessions) {
+          if (!stateToWrite.has(sessionID)) {
+            delete payload[sessionID];
           }
         }
         for (const [sessionID, sessionMap] of stateToWrite.entries()) {

@@ -119,6 +119,9 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
         description: `Find deferred tools marked "${deferLabel}" by task, name, or prefix. Returns full tool IDs and parameter schemas.\nCall tool_search({ query: "<task or name>" }). For regex, use tool_search_regex({ pattern: "<regex>" }).`,
         args: { query: tool.schema.string().describe('Task, tool name, or prefix.') },
         async execute(args, context) {
+          if (args.query.length > 500) {
+            return `Query exceeds maximum length of 500 characters.`;
+          }
           const sessionID = context?.sessionID;
           await vault.awaitReady(searchTimeoutMs);
           const allHits = await vault.query(args.query, vault.count || maxResults, searchTimeoutMs);
