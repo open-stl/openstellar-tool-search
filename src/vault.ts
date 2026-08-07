@@ -1,4 +1,5 @@
 import type { ToolMeta, ScoreParams, EmbedConfig } from './types.js';
+import type { ToolProvider } from './tool-provider.js';
 import { ToolStore } from './tool-store.js';
 import { HybridSearchEngine } from './search-engine.js';
 
@@ -20,6 +21,11 @@ export class ToolVault {
     if (this.store.add(id, description, parameters)) {
       this.engine.notifyChanged();
     }
+  }
+
+  async registerProvider(provider: ToolProvider): Promise<void> {
+    await this.store.registerProvider(provider);
+    this.engine.notifyChanged();
   }
 
   prebuildSemantic(): Promise<void> | undefined {

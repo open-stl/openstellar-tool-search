@@ -1,4 +1,5 @@
 import type { ToolMeta } from './types.js';
+import type { ToolProvider, ToolDefinition } from './tool-provider.js';
 
 function extractParamTexts(schema: unknown, prefix = ''): string[] {
   if (!schema || typeof schema !== 'object') return [];
@@ -83,4 +84,21 @@ export class ToolStore {
   get(id: string): ToolMeta | undefined { return this.store.get(id); }
   list(): ToolMeta[] { return Array.from(this.store.values()); }
   get count(): number { return this.store.size; }
+
+  /**
+   * Register a ToolProvider and index its tools. Subscribes to updates if supported.
+   */
+  async registerProvider(provider: ToolProvider): Promise<void> {
+    const tools = await provider.getTools();
+    for (const tool of tools) {
+      this.add(tool.id, tool.description, tool.parameters);
+    }
+    if (provider.onUpdate) {
+      provider.onUpdate((updatedTools) => {
+        for (const tool of updatedTools) {
+          this.add(tool.id, tool.description, tool.parameters);
+        }
+      });
+    }
+  }
 }

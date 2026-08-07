@@ -26,6 +26,15 @@ A configured reset-tool execution that clears Authorization. It does not necessa
 ### Compaction Reset
 A `compress` execution or host session compaction. It clears both Authorization and Delivery History.
 
+### ToolProvider
+A source seam that yields tool definitions to `ToolStore`. Providers can be static (local OpenCode tools) or dynamic (external MCP servers).
+
+### MCP Server Connection
+A managed stdio or Streamable HTTP/SSE transport link to an external Model Context Protocol server, configured with health checks and keep-alive reconnect logic.
+
+### MCP Tool Adapter
+The component that translates raw MCP tool definitions and JSON Schemas into OpenCode tool interfaces, assigning `deferred` status according to server deferral policy.
+
 ### No-Op Discovery
 A concise successful search response used when a query produces results but none are New Discovery Results. It contains no repeated tool definitions.
 

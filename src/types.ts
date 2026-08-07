@@ -1,3 +1,5 @@
+import type { McpServerConfig } from './mcp/types.js';
+
 export interface ToolMeta {
   id: string;
   description: string;
@@ -16,11 +18,21 @@ export interface Hit<T> {
 }
 
 export interface ToolSearchConfig {
+  /** Tools that are exempt from deferral (alias for `alwaysLoad`). */
+  pinned?: string[];
   alwaysLoad?: string[];
+
+  /** Maximum search results returned per query (alias for `searchLimit`). Default: 10. */
+  maxResults?: number;
+  searchLimit?: number;
+
+  /** Operational search mode: 'hybrid' (BM25 + vectors) or 'keyword' (BM25 only). Default: 'hybrid'. */
+  mode?: 'hybrid' | 'keyword';
+
   resetTools?: string[];
   bm25?: Partial<ScoreParams>;
   embedding?: {
-    enabled: boolean;
+    enabled?: boolean;
     model?: string;
     threshold?: number;
     quantized?: boolean;
@@ -29,24 +41,13 @@ export interface ToolSearchConfig {
     cache?: boolean;
     useWorker?: boolean;
   };
-  searchLimit?: number;
   deferDescription?: string;
-  /**
-   * Maximum time (ms) to wait for the semantic (transformer) index before
-   * falling back to BM25 in tool_search. Default 2000 (2s).
-   *
-   * First call after plugin load triggers @xenova/transformers model
-   * download + ONNX init (~5-10s on cold cache). Without a timeout, the
-   * user sees a silent freeze while the model loads.
-   *
-   * If the timeout elapses, BM25 results are returned immediately and the
-   * semantic index continues to build in the background. Subsequent
-   * tool_search calls within the same process will already have a warm
-   * index and pay no penalty.
-   *
-   * Set to 0 to disable the timeout (wait indefinitely — original behavior).
-   */
   searchTimeoutMs?: number;
+  mcpServers?: Record<string, McpServerConfig> | McpServerConfig[];
+  mcp?: {
+    servers?: Record<string, McpServerConfig> | McpServerConfig[];
+    [key: string]: unknown;
+  };
 }
 
 export interface EmbedConfig {

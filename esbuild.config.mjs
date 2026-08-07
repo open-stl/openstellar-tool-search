@@ -7,6 +7,9 @@ const shared = {
   platform: 'node',
   target: 'node20',
   external: ['@opencode-ai/plugin', 'zod', 'effect', '@xenova/transformers'],
+  banner: {
+    js: `import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);`,
+  },
 };
 
 await build({

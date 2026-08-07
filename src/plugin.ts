@@ -4,6 +4,7 @@ import { ToolVault } from './vault.js';
 import type { ToolSearchConfig, EmbedConfig } from './types.js';
 import { checkForUpdate, formatUpdateMessage } from './hooks/auto-update-checker.js';
 import { SessionToolRegistry } from './session-tool-registry.js';
+import { McpToolProvider } from './mcp/mcp-tool-provider.js';
 
 const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
 const DEFAULT_DEFER = '[deferred]';
@@ -43,12 +44,14 @@ function toast(
 const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promise<Hooks> => {
   const opts = (options ?? {}) as ToolSearchConfig;
   const resetToolIDs = new Set(['compress', ...(opts.resetTools ?? [])]);
-  const maxResults = opts.searchLimit ?? 10;
+  const maxResults = opts.maxResults ?? opts.searchLimit ?? 10;
+  const pinnedTools = opts.pinned ?? opts.alwaysLoad ?? [];
+  const isKeywordMode = opts.mode === 'keyword';
   const deferLabel = opts.deferDescription ?? DEFAULT_DEFER;
   const searchTimeoutMs = opts.searchTimeoutMs ?? 2000;
   const embeddingCfg: Partial<EmbedConfig> = opts.embedding ?? {};
   const embedding = {
-    enabled: embeddingCfg.enabled ?? true,
+    enabled: isKeywordMode ? false : (embeddingCfg.enabled ?? true),
     ...embeddingCfg,
     quantized: embeddingCfg.quantized ?? false,
     useWorker: embeddingCfg.useWorker ?? true,
@@ -60,9 +63,36 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     embedding,
   });
   const sessionRegistry = new SessionToolRegistry({
-    alwaysOn: [...SEARCH_IDS, ...(opts.alwaysLoad ?? [])],
+    alwaysOn: [...SEARCH_IDS, ...pinnedTools],
     resetTools: resetToolIDs,
   });
+
+  let mcpProvider: McpToolProvider | null = null;
+
+  const initMcp = (mcpConfig: Record<string, import('./mcp/types.js').McpServerConfig> | import('./mcp/types.js').McpServerConfig[]) => {
+    if (mcpProvider) return;
+    mcpProvider = new McpToolProvider(mcpConfig);
+    vault.registerProvider(mcpProvider).catch((err: unknown) => {
+      console.warn('[ToolSearchPlugin] Failed to register McpToolProvider:', err);
+    });
+    mcpProvider
+      .warmUp()
+      .then(() => {
+        for (const t of mcpProvider!.getTools()) {
+          if (t.deferred !== false) {
+            sessionRegistry.registerTool(t.id);
+          }
+        }
+      })
+      .catch((err: unknown) => {
+        console.warn('[ToolSearchPlugin] Background MCP warm-up error:', err);
+      });
+  };
+
+  const pluginMcpConfig = opts.mcp?.servers ?? opts.mcpServers ?? opts.mcp;
+  if (pluginMcpConfig && typeof pluginMcpConfig === 'object') {
+    initMcp(pluginMcpConfig as Record<string, import('./mcp/types.js').McpServerConfig>);
+  }
   let deferrals = 0;
   let total = 0;
   let alerted = false;
@@ -72,6 +102,14 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
   setTimeout(() => toast(ctx, 'Tool Search', 'Active — tools will be deferred on first prompt.', 'info', 4000), 3000);
 
   const hooks: Hooks = {
+    config: async (cfg) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mcpObj = (cfg as any)?.mcp;
+      const topLevelMcp = mcpObj?.servers ?? mcpObj;
+      if (topLevelMcp && typeof topLevelMcp === 'object') {
+        initMcp(topLevelMcp);
+      }
+    },
     tool: {
       tool_search: tool({
         description: `Find deferred tools marked "${deferLabel}" by task, name, or prefix. Returns full tool IDs and parameter schemas.\nCall tool_search({ query: "<task or name>" }). For regex, use tool_search_regex({ pattern: "<regex>" }).`,
