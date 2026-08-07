@@ -144,4 +144,73 @@ describe('SessionToolRegistry', () => {
     expect(registry.resetIfConfigured('compress', 'session-1')).toBe(true);
     expect(registry.requiresReminder('session-1', 'tool_a', 'tool_a')).toBe(true);
   });
+
+  it('persists delivery history to disk across registry reloads', async () => {
+    const deliveryFile = testFile.replace(/\.json$/, '-delivery.json');
+    try {
+      const registry1 = new SessionToolRegistry({
+        alwaysOn: ['tool_search'],
+        resetTools: ['compress'],
+        filePath: testFile,
+        debounceMs: 0,
+      });
+
+      registry1.registerTool('tool_a');
+      registry1.processSearchResult('session-1', [toolA], 10);
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(existsSync(deliveryFile)).toBe(true);
+
+      const registry2 = new SessionToolRegistry({
+        alwaysOn: ['tool_search'],
+        resetTools: ['compress'],
+        filePath: testFile,
+        debounceMs: 0,
+      });
+
+      registry2.registerTool('tool_a');
+      const secondRes = registry2.processSearchResult('session-1', [toolA], 10);
+      expect(secondRes.kind).toBe('no-op');
+    } finally {
+      if (existsSync(deliveryFile)) {
+        try { rmSync(deliveryFile, { force: true }); } catch {}
+      }
+    }
+  });
+
+  it('compactSession clears both authorization and delivery history on disk', async () => {
+    const deliveryFile = testFile.replace(/\.json$/, '-delivery.json');
+    try {
+      const registry1 = new SessionToolRegistry({
+        alwaysOn: ['tool_search'],
+        resetTools: ['compress'],
+        filePath: testFile,
+        debounceMs: 0,
+      });
+
+      registry1.registerTool('tool_a');
+      registry1.processSearchResult('session-1', [toolA], 10);
+
+      await new Promise((r) => setTimeout(r, 20));
+
+      registry1.compactSession('session-1');
+
+      await new Promise((r) => setTimeout(r, 20));
+
+      const registry2 = new SessionToolRegistry({
+        alwaysOn: ['tool_search'],
+        resetTools: ['compress'],
+        filePath: testFile,
+        debounceMs: 0,
+      });
+
+      registry2.registerTool('tool_a');
+      const secondRes = registry2.processSearchResult('session-1', [toolA], 10);
+      expect(secondRes.kind).toBe('new');
+    } finally {
+      if (existsSync(deliveryFile)) {
+        try { rmSync(deliveryFile, { force: true }); } catch {}
+      }
+    }
+  });
 });

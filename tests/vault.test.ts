@@ -299,7 +299,7 @@ describe('ToolVault', () => {
       const v = new ToolVault({ embedding: { enabled: true } });
       v.add('read', 'Read a file', {});
       // Manually mark not-stale by simulating existing index state.
-      (v as unknown as { semanticStale: boolean }).semanticStale = false;
+      (v as unknown as { engine: { semanticStale: boolean } }).engine.semanticStale = false;
       expect(v.prebuildSemantic()).toBeUndefined();
     });
 
@@ -314,7 +314,7 @@ describe('ToolVault', () => {
       const v = new ToolVault({ embedding: { enabled: true } });
       v.add('read', 'Read a file', {});
       expect(v.isSemanticReady).toBe(false);
-      (v as unknown as { semanticStale: boolean }).semanticStale = false;
+      (v as unknown as { engine: { semanticStale: boolean } }).engine.semanticStale = false;
       expect(v.isSemanticReady).toBe(true);
     });
   });

@@ -7,6 +7,7 @@ export interface SessionToolRegistryOptions {
   alwaysOn: Iterable<string>;
   resetTools: Iterable<string>;
   filePath?: string;
+  deliveryHistoryFilePath?: string;
   debounceMs?: number;
   persistence?: AuthPersistence;
 }
@@ -50,7 +51,10 @@ export class SessionToolRegistry {
       resetTools: options.resetTools,
       persistence,
     });
-    this.deliveryHistory = new DeliveryHistory();
+    this.deliveryHistory = new DeliveryHistory({
+      filePath: options.deliveryHistoryFilePath ?? (options.filePath ? options.filePath.replace(/\.json$/, '-delivery.json') : undefined),
+      debounceMs: options.debounceMs,
+    });
   }
 
   public registerTool(toolID: string): boolean {

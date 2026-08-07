@@ -47,7 +47,7 @@ export function computeFingerprint(toolMeta: ToolMeta): string {
 // Delivery History Persistence (CONTEXT.md rule 43)
 // ---------------------------------------------------------------------------
 
-function getDefaultDeliveryHistoryPath(): string {
+export function getDefaultDeliveryHistoryPath(): string {
   if (platform() === 'win32' && env.APPDATA) {
     return join(env.APPDATA, 'opencode', 'tool-search', 'delivery-history.json');
   }
@@ -229,8 +229,12 @@ export class DeliveryHistory {
   private history = new Map<string, Map<string, string>>();
   private persistence: DeliveryHistoryPersistence;
 
-  constructor(persistence?: DeliveryHistoryPersistence) {
-    this.persistence = persistence ?? new DeliveryHistoryPersistence();
+  constructor(options?: DeliveryHistoryPersistenceOptions | DeliveryHistoryPersistence) {
+    if (options && 'save' in options && typeof options.save === 'function') {
+      this.persistence = options as DeliveryHistoryPersistence;
+    } else {
+      this.persistence = new DeliveryHistoryPersistence(options as DeliveryHistoryPersistenceOptions | undefined);
+    }
     this.history = this.persistence.load();
   }
 
