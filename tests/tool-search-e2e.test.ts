@@ -281,7 +281,7 @@ describe('E2E: tool.definition hook side-effects', () => {
     expect(out.description).toBe('Real description of tool_search itself');
   });
 
-  it('19. defers top-level description and strips parameter schemas for prompt-zero', async () => {
+  it('19. defers top-level description but preserves parameter descriptions in place (reference preserved)', async () => {
     const ctx = makeCtx();
     const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
     const defHook = hooks['tool.definition']!;
@@ -289,10 +289,11 @@ describe('E2E: tool.definition hook side-effects', () => {
     const out: any = { description: 'Real', parameters: params };
     await defHook({ toolID: 'other_tool' }, out);
     expect(out.description).toBe('Real [deferred]');
-    expect(out.parameters).toEqual({ type: 'object', properties: {} });
+    expect((out.parameters as any).properties.x.description).toBe('Original X desc');
+    expect(out.parameters).toBe(params);
   });
 
-  it('19b. parameter schemas are stripped for prompt-zero deferred tools', async () => {
+  it('19b. parameter descriptions are preserved at any depth', async () => {
     const ctx = makeCtx();
     const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
     const defHook = hooks['tool.definition']!;
@@ -323,8 +324,10 @@ describe('E2E: tool.definition hook side-effects', () => {
     };
     const out: any = { description: 'Real', parameters: params };
     await defHook({ toolID: 'deeply_nested_tool' }, out);
+    const p = out.parameters as any;
     expect(out.description).toBe('Real [deferred]');
-    expect(out.parameters).toEqual({ type: 'object', properties: {} });
+    expect(p.properties.outer.properties.inner.properties.leaf.description).toBe('Deep nested description');
+    expect(p.properties.items.items.properties.name.description).toBe('Item name');
   });
 });
 
@@ -368,7 +371,7 @@ describe('E2E: config options', () => {
     const out: any = { description: 'Real', parameters: { type: 'object', properties: { x: { type: 'string', description: 'X' } } } };
     await defHook({ toolID: 'some_tool' }, out);
     expect(out.description).toBe('Real [hidden]');
-    expect(out.parameters).toEqual({ type: 'object', properties: {} });
+    expect((out.parameters as any).properties.x.description).toBe('X');
   });
 
   it('22. alwaysLoad exempts specific tools from [deferred] deferral', async () => {
@@ -383,7 +386,7 @@ describe('E2E: config options', () => {
     const other: any = { description: 'Other desc', parameters: { type: 'object', properties: { y: { type: 'string', description: 'Y desc' } } } };
     await defHook({ toolID: 'other_tool' }, other);
     expect(other.description).toBe('Other desc [deferred]');
-    expect(other.parameters).toEqual({ type: 'object', properties: {} });
+    expect((other.parameters as any).properties.y.description).toBe('Y desc');
   });
 
   it('23. bm25.k1 and bm25.b config are accepted and produce results', async () => {

@@ -31,7 +31,7 @@ describe('Anthropic & Codex-Grade Enhancements', () => {
     expect(systemOutput1.system[0]).toContain('Tools marked "[deferred]" are deferred');
   });
 
-  it('strips parameter JSON schemas from prompt-zero tool definitions for deferred tools', async () => {
+  it('preserves parameter schema definitions for tool argument validation while deferring description', async () => {
     const mockCtx = {} as PluginInput;
     const hooks = await ToolSearchPlugin.server(mockCtx, {});
 
@@ -44,8 +44,8 @@ describe('Anthropic & Codex-Grade Enhancements', () => {
       await hooks['tool.definition']({ toolID: 'get_user' }, toolDefOutput);
     }
 
-    // Prompt-zero definition has parameters stripped
-    expect(toolDefOutput.parameters).toEqual({ type: 'object', properties: {} });
+    // Parameters schema is preserved so OpenCode validates tool arguments correctly
+    expect((toolDefOutput.parameters as any).properties).toHaveProperty('userId');
 
     // Search discovery payload retains full parameters
     const searchTool = (hooks.tool as any).tool_search;

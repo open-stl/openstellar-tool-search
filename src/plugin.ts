@@ -156,7 +156,6 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
       if (sessionRegistry.registerTool(input.toolID)) {
         const firstSentence = getFirstSentence(output.description);
         output.description = firstSentence ? `${firstSentence} ${deferLabel}` : deferLabel;
-        output.parameters = { type: 'object', properties: {} };
       }
     },
     'tool.execute.before': async (input) => {
