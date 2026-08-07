@@ -40,7 +40,7 @@ function toast(
   }, 100);
 }
 
-export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Promise<Hooks> => {
+const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promise<Hooks> => {
   const opts = (options ?? {}) as ToolSearchConfig;
   const resetToolIDs = new Set(['compress', ...(opts.resetTools ?? [])]);
   const maxResults = opts.searchLimit ?? 10;
@@ -141,7 +141,7 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
       }
 
       if (deferrals > 0) {
-        output.system.push(`${deferrals}/${total} tools are deferred ("${deferLabel}"). Before calling one, retrieve it with tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "<regex>" }). Deferred tools require a successful search before execution. Search results identify the canonical tool ID, which must be used for execution. When the tool ID is already known, prefer tool_search_regex({ pattern: "^<id>$" }) for a reliable exact match — multi-term queries to tool_search may not return every matching tool.`);
+        output.system.push(`${deferrals}/${total} tools are deferred ("${deferLabel}"). Search for a deferred tool ONCE per session before its first use using tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "<regex>" }). Search results identify the canonical tool ID, which must be used for execution. Once searched, a tool remains authorized for all subsequent calls in the current session until compaction or reset. Do NOT search again for tools already searched in this session — call authorized tools directly. When the exact tool ID is known, prefer tool_search_regex({ pattern: "^<id>$" }).`);
         if (!alerted) { alerted = true; toast(ctx, 'Tool Search', `${deferrals}/${total} tools deferred.`, 'info', 4000); }
       }
     },
@@ -171,3 +171,8 @@ export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Pr
   };
   return hooks;
 };
+
+export const ToolSearchPlugin = Object.assign(ToolSearchPluginImpl, {
+  id: 'openstellar-tool-search',
+  server: ToolSearchPluginImpl,
+});

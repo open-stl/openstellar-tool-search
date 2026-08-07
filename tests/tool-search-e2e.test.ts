@@ -361,7 +361,7 @@ describe('E2E: skill authorization policy', () => {
     const out: any = { system: [] };
     await hooks['experimental.chat.system.transform']!({} as any, out);
     const policy = out.system.join('\\n');
-    expect(policy).toContain('Deferred tools require a successful search before execution');
+    expect(policy).toContain('Search for a deferred tool ONCE per session');
     expect(policy).not.toContain('Exception:');
     expect(policy).not.toContain('One exact successful lookup permits one skill invocation');
   });

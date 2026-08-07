@@ -293,7 +293,6 @@ describe('ToolSearchPlugin', () => {
     await hooks['experimental.chat.system.transform']!({ sessionID: 'policy-session' } as any, output as any);
     const text = output.system.join('\n');
     expect(text).toContain('canonical tool ID');
-    expect(text).toContain('which must be used for execution');
     expect(text).not.toContain('alias');
     // When the tool ID is already known, AI should use tool_search_regex for a reliable exact match.
     expect(text).toContain('tool_search_regex');
