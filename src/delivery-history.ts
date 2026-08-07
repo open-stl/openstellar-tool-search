@@ -65,6 +65,7 @@ export class DeliveryHistoryPersistence {
   private debounceMs: number;
   private timer: NodeJS.Timeout | null = null;
   private pendingData: Map<string, Map<string, string>> | null = null;
+  private lastMemoryState: Map<string, Map<string, string>> | null = null;
   private writePromise: Promise<void> | null = null;
 
   constructor(options: DeliveryHistoryPersistenceOptions = {}) {
@@ -126,9 +127,10 @@ export class DeliveryHistoryPersistence {
   }
 
   public save(history: Map<string, Map<string, string>>): void {
-    this.pendingData = new Map(
+    this.lastMemoryState = new Map(
       Array.from(history.entries()).map(([k, v]) => [k, new Map(v)]),
     );
+    this.pendingData = this.lastMemoryState;
 
     if (this.timer) {
       clearTimeout(this.timer);
@@ -158,7 +160,22 @@ export class DeliveryHistoryPersistence {
 
     const doWrite = async () => {
       try {
-        const payload: PersistedDeliveryHistory = {};
+        let payload: PersistedDeliveryHistory = {};
+        if (existsSync(this.filePath)) {
+          try {
+            const raw = readFileSync(this.filePath, 'utf-8');
+            payload = JSON.parse(raw);
+          } catch {
+            payload = {};
+          }
+        }
+        if (this.lastMemoryState) {
+          for (const sessionID of Object.keys(payload)) {
+            if (!this.lastMemoryState.has(sessionID)) {
+              delete payload[sessionID];
+            }
+          }
+        }
         for (const [sessionID, sessionMap] of stateToWrite.entries()) {
           const entries: DeliveryEntry[] = [];
           for (const [canonicalID, fingerprint] of sessionMap.entries()) {
@@ -166,6 +183,8 @@ export class DeliveryHistoryPersistence {
           }
           if (entries.length > 0) {
             payload[sessionID] = entries;
+          } else {
+            delete payload[sessionID];
           }
         }
 

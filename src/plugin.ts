@@ -72,6 +72,13 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
   const initMcp = (mcpConfig: Record<string, import('./mcp/types.js').McpServerConfig> | import('./mcp/types.js').McpServerConfig[]) => {
     if (mcpProvider) return;
     mcpProvider = new McpToolProvider(mcpConfig);
+
+    const onExit = () => {
+      mcpProvider?.close().catch(() => {});
+    };
+    process.once('beforeExit', onExit);
+    process.once('exit', onExit);
+
     vault.registerProvider(mcpProvider).catch((err: unknown) => {
       console.warn('[ToolSearchPlugin] Failed to register McpToolProvider:', err);
     });
@@ -116,6 +123,7 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
         args: { query: tool.schema.string().describe('Task, tool name, or prefix.') },
         async execute(args, context) {
           const sessionID = context?.sessionID;
+          await vault.awaitReady(searchTimeoutMs);
           const allHits = await vault.query(args.query, vault.count || maxResults, searchTimeoutMs);
           if (allHits.length === 0) return `No matches for "${args.query}". Try broader terms or tool_search_regex.`;
 
@@ -128,6 +136,7 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
         args: { pattern: tool.schema.string().describe('Case-insensitive regex for tool IDs and descriptions.') },
         async execute(args, context) {
           const sessionID = context?.sessionID;
+          await vault.awaitReady(searchTimeoutMs);
           const allHits = vault.grep(args.pattern, vault.count || maxResults);
           if (allHits.length === 0) return `No tools matched pattern "${args.pattern}".`;
 
@@ -193,6 +202,7 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
         if (typeof sessionID === 'string' && sessionID.length > 0) {
           sessionRegistry.deleteSession(sessionID);
         }
+        await mcpProvider?.close();
         return;
       }
       if (event.type !== 'session.created' || updateStaged) return;

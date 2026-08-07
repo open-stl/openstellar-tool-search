@@ -24,6 +24,7 @@ function extractParamTexts(schema: unknown, prefix = ''): string[] {
  */
 export class ToolStore {
   private store = new Map<string, ToolMeta>();
+  private providers: ToolProvider[] = [];
 
   /**
    * Add or update a tool definition. Returns `true` if a new tool was added
@@ -89,6 +90,7 @@ export class ToolStore {
    * Register a ToolProvider and index its tools. Subscribes to updates if supported.
    */
   async registerProvider(provider: ToolProvider): Promise<void> {
+    this.providers.push(provider);
     const tools = await provider.getTools();
     for (const tool of tools) {
       this.add(tool.id, tool.description, tool.parameters);
@@ -100,5 +102,14 @@ export class ToolStore {
         }
       });
     }
+  }
+
+  /**
+   * Await readiness on all registered providers.
+   */
+  async awaitReady(timeoutMs?: number): Promise<void> {
+    await Promise.all(
+      this.providers.map((p) => (p.awaitReady ? p.awaitReady(timeoutMs) : Promise.resolve())),
+    );
   }
 }

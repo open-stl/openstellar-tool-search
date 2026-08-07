@@ -21,6 +21,7 @@ export class McpToolProvider implements ToolProvider {
   private factory: TransportFactory;
   private tools: ToolDefinition[] = [];
   private listeners: ((tools: ToolDefinition[]) => void)[] = [];
+  private warmUpPromise: Promise<ToolDefinition[]> | null = null;
 
   constructor(
     servers: Record<string, McpServerConfig> | McpServerConfig[],
@@ -40,45 +41,70 @@ export class McpToolProvider implements ToolProvider {
     this.factory.register('remote', new RemoteTransportConnector());
   }
 
-  async warmUp(): Promise<ToolDefinition[]> {
-    const allTools: ToolDefinition[] = [];
-
-    for (const serverConfig of this.servers) {
-      const serverName = serverConfig.name ?? 'unnamed';
-      try {
-        const client = new Client(
-          { name: 'openstellar-tool-search', version: '1.0.0' },
-          { capabilities: {} },
-        );
-        const serverKey = this.cache.getServerKey({ ...serverConfig, name: serverName });
-
-        const cacheEntry = await this.cache.getOrCreate(serverKey, async () => {
-          const transport = await this.factory.connect({ ...serverConfig, name: serverName }, client);
-          return { tools: {}, transport, client };
-        });
-
-        const mcpToolsResult = await cacheEntry.client.listTools();
-
-        for (const toolDef of mcpToolsResult.tools) {
-          const isDeferred = serverConfig.defer_loading ?? serverConfig.deferred ?? true;
-          const toolId = sanitizeToolId(serverName, toolDef.name);
-
-          allTools.push({
-            id: toolId,
-            description: toolDef.description ?? '',
-            parameters: toolDef.inputSchema ?? {},
-            deferred: isDeferred,
-          });
-        }
-      } catch (err) {
-        // Log warning and continue with remaining servers
-        console.warn(`[McpToolProvider] Failed to initialize server ${serverName}:`, err);
-      }
+  warmUp(): Promise<ToolDefinition[]> {
+    if (this.warmUpPromise) {
+      return this.warmUpPromise;
     }
+    this.warmUpPromise = (async () => {
+      const allTools: ToolDefinition[] = [];
 
-    this.tools = allTools;
-    this.notifyListeners();
-    return this.tools;
+      for (const serverConfig of this.servers) {
+        const serverName = serverConfig.name ?? 'unnamed';
+        try {
+          const client = new Client(
+            { name: 'openstellar-tool-search', version: '1.0.0' },
+            { capabilities: {} },
+          );
+          const serverKey = this.cache.getServerKey({ ...serverConfig, name: serverName });
+
+          const cacheEntry = await this.cache.getOrCreate(serverKey, async () => {
+            const transport = await this.factory.connect({ ...serverConfig, name: serverName }, client);
+            return { tools: {}, transport, client };
+          });
+
+          const mcpToolsResult = await cacheEntry.client.listTools();
+
+          for (const toolDef of mcpToolsResult.tools) {
+            const isDeferred = serverConfig.defer_loading ?? serverConfig.deferred ?? true;
+            const toolId = sanitizeToolId(serverName, toolDef.name);
+
+            allTools.push({
+              id: toolId,
+              description: toolDef.description ?? '',
+              parameters: toolDef.inputSchema ?? {},
+              deferred: isDeferred,
+            });
+          }
+        } catch (err) {
+          // Log warning and continue with remaining servers
+          console.warn(`[McpToolProvider] Failed to initialize server ${serverName}:`, err);
+        }
+      }
+
+      this.tools = allTools;
+      this.notifyListeners();
+      return this.tools;
+    })();
+    return this.warmUpPromise;
+  }
+
+  async awaitReady(timeoutMs = 1500): Promise<void> {
+    if (!this.warmUpPromise) {
+      return;
+    }
+    let timer: NodeJS.Timeout | undefined;
+    const timeoutTimer = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, timeoutMs);
+    });
+
+    try {
+      await Promise.race([
+        this.warmUpPromise.then(() => {}, () => {}),
+        timeoutTimer,
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   getTools(): ToolDefinition[] {

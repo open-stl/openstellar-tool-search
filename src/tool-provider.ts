@@ -17,4 +17,9 @@ export interface ToolProvider {
    * Register callback for when tool definitions update dynamically.
    */
   onUpdate?(callback: (tools: ToolDefinition[]) => void): void;
+
+  /**
+   * Await until provider is ready or warm-up finishes.
+   */
+  awaitReady?(timeoutMs?: number): Promise<void>;
 }

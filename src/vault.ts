@@ -28,6 +28,10 @@ export class ToolVault {
     this.engine.notifyChanged();
   }
 
+  awaitReady(timeoutMs?: number): Promise<void> {
+    return this.store.awaitReady(timeoutMs);
+  }
+
   prebuildSemantic(): Promise<void> | undefined {
     return this.engine.prebuildSemantic();
   }
