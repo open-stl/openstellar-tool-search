@@ -8,6 +8,7 @@ import { McpToolProvider } from './mcp/mcp-tool-provider.js';
 
 const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
 const DEFAULT_DEFER = '[deferred]';
+const MAX_REGEX_PATTERN_LENGTH = 200;
 
 function getFirstSentence(desc: string): string {
   if (!desc) return '';
@@ -131,6 +132,14 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
         description: `Find tools by case-insensitive regex over IDs and descriptions. Returns full tool IDs and parameter schemas.\nCall tool_search_regex({ pattern: "<regex>" }). For task or name search, use tool_search({ query: "<task or name>" }).`,
         args: { pattern: tool.schema.string().describe('Case-insensitive regex for tool IDs and descriptions.') },
         async execute(args, context) {
+          if (args.pattern.length > MAX_REGEX_PATTERN_LENGTH) {
+            return `Pattern exceeds maximum length of ${MAX_REGEX_PATTERN_LENGTH} characters.`;
+          }
+          try {
+            new RegExp(args.pattern, 'i');
+          } catch (err) {
+            return `Invalid regex pattern "${args.pattern}": ${err instanceof Error ? err.message : String(err)}.`;
+          }
           const sessionID = context?.sessionID;
           await vault.awaitReady(searchTimeoutMs);
           const allHits = vault.grep(args.pattern, vault.count || maxResults);
@@ -147,6 +156,7 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
       if (sessionRegistry.registerTool(input.toolID)) {
         const firstSentence = getFirstSentence(output.description);
         output.description = firstSentence ? `${firstSentence} ${deferLabel}` : deferLabel;
+        output.parameters = { type: 'object', properties: {} };
       }
     },
     'tool.execute.before': async (input) => {
@@ -184,7 +194,7 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
       }
 
       if (deferrals > 0) {
-        output.system.push(`${deferrals}/${total} tools are deferred ("${deferLabel}"). Search for a deferred tool ONCE per session before its first use using tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "<regex>" }). Search results identify the canonical tool ID, which must be used for execution. Once searched, a tool remains authorized for all subsequent calls in the current session until compaction or reset. Do NOT search again for tools already searched in this session — call authorized tools directly. When the exact tool ID is known, prefer tool_search_regex({ pattern: "^<id>$" }).`);
+        output.system.push(`Tools marked "${deferLabel}" are deferred. Search for a deferred tool ONCE per session before its first use using tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "<regex>" }). Search results identify the canonical tool ID, which must be used for execution. Once searched, a tool remains authorized for all subsequent calls in the current session until compaction or reset. Do NOT search again for tools already searched in this session — call authorized tools directly. When the exact tool ID is known, prefer tool_search_regex({ pattern: "^<id>$" }).`);
         if (!alerted) { alerted = true; toast(ctx, 'Tool Search', `${deferrals}/${total} tools deferred.`, 'info', 4000); }
       }
     },
