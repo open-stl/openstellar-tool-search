@@ -6,7 +6,6 @@ import { env } from 'node:process';
 import { gt, valid } from 'semver';
 import { resolveRegistryUrl, buildDistTagsUrl } from './npm-registry.js';
 
-const PACKAGE_SCOPE = '@openstellar';
 const PACKAGE_NAME = '@openstellar/tool-search';
 const NPM_FETCH_TIMEOUT = 5000;
 
@@ -122,27 +121,6 @@ export function invalidatePackageCache(
         }
     }
     return !removalFailed;
-}
-
-export async function invalidatePackageCacheAsync(
-    cacheRoots = getPossibleCacheRoots(),
-): Promise<boolean> {
-    const seen = new Set<string>();
-    const tasks: Promise<boolean>[] = [];
-
-    for (const root of cacheRoots) {
-        if (seen.has(root)) continue;
-        seen.add(root);
-        for (const target of getPackageCacheTargets(root)) {
-            tasks.push(
-                fsPromises.rm(target, { recursive: true, force: true })
-                    .then(() => true)
-                    .catch(() => false)
-            );
-        }
-    }
-    const results = await Promise.allSettled(tasks);
-    return results.every((r) => r.status === 'fulfilled' && r.value === true);
 }
 
 export function isNewerVersion(latest: string, current: string): boolean {

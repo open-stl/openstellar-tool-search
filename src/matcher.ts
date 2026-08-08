@@ -342,15 +342,6 @@ export class SemanticMatcher {
     }
   }
 
-  private async indexOne(id: string, text: string): Promise<void> {
-    try {
-      const out = await this.runInference(text, { pooling: 'mean', normalize: true });
-      this.vectors.set(id, this.normalize(out.data));
-    } catch {
-      this.vectors.set(id, new Float32Array(this.dims));
-    }
-  }
-
   async locate(text: string): Promise<Map<string, number>> {
     await this.open();
     if (!text.trim() || this.vectors.size === 0) return new Map();
