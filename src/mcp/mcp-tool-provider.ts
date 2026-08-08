@@ -147,6 +147,14 @@ export class McpToolProvider implements ToolProvider {
     return this.tools;
   }
 
+  getExecutableTools(): Record<string, ReturnType<typeof tool>> {
+    const result: Record<string, ReturnType<typeof tool>> = {};
+    for (const [id, t] of this.executableTools.entries()) {
+      result[id] = t;
+    }
+    return result;
+  }
+
   getExecutableTool(id: string): ReturnType<typeof tool> | undefined {
     const direct = this.executableTools.get(id);
     if (direct) return direct;

@@ -68,9 +68,49 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     resetTools: resetToolIDs,
   });
 
+  const tools: Record<string, ReturnType<typeof tool>> = {
+    tool_search: tool({
+      description: `Find deferred tools marked "${deferLabel}" by task, name, or prefix. Returns full tool IDs and parameter schemas.\nCall tool_search({ query: "<task or name>" }). For regex, use tool_search_regex({ pattern: "<regex>" }).`,
+      args: { query: tool.schema.string().describe('Task, tool name, or prefix.') },
+      async execute(args, context) {
+        if (args.query.length > 500) {
+          return `Query exceeds maximum length of 500 characters.`;
+        }
+        const sessionID = context?.sessionID;
+        await vault.awaitReady(searchTimeoutMs);
+        const allHits = await vault.query(args.query, vault.count || maxResults, searchTimeoutMs);
+        if (allHits.length === 0) return `No matches for "${args.query}". Try broader terms or tool_search_regex.`;
+
+        const processing = sessionRegistry.processSearchResult(sessionID, allHits, maxResults);
+        return processing.responseText;
+      },
+    }),
+    tool_search_regex: tool({
+      description: `Find tools by case-insensitive regex over IDs and descriptions. Returns full tool IDs and parameter schemas.\nCall tool_search_regex({ pattern: "<regex>" }). For task or name search, use tool_search({ query: "<task or name>" }).`,
+      args: { pattern: tool.schema.string().describe('Case-insensitive regex for tool IDs and descriptions.') },
+      async execute(args, context) {
+        if (args.pattern.length > MAX_REGEX_PATTERN_LENGTH) {
+          return `Pattern exceeds maximum length of ${MAX_REGEX_PATTERN_LENGTH} characters.`;
+        }
+        try {
+          new RegExp(args.pattern, 'i');
+        } catch (err) {
+          return `Invalid regex pattern "${args.pattern}": ${err instanceof Error ? err.message : String(err)}.`;
+        }
+        const sessionID = context?.sessionID;
+        await vault.awaitReady(searchTimeoutMs);
+        const allHits = vault.grep(args.pattern, vault.count || maxResults);
+        if (allHits.length === 0) return `No tools matched pattern "${args.pattern}".`;
+
+        const processing = sessionRegistry.processSearchResult(sessionID, allHits, maxResults);
+        return processing.responseText;
+      },
+    }),
+  };
+
   let mcpProvider: McpToolProvider | null = null;
 
-  const initMcp = (mcpConfig: Record<string, import('./mcp/types.js').McpServerConfig> | import('./mcp/types.js').McpServerConfig[]) => {
+  const initMcp = async (mcpConfig: Record<string, import('./mcp/types.js').McpServerConfig> | import('./mcp/types.js').McpServerConfig[]) => {
     if (mcpProvider) return;
     mcpProvider = new McpToolProvider(mcpConfig);
 
@@ -80,22 +120,21 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     process.once('beforeExit', onExit);
     process.once('exit', onExit);
 
-    vault.registerProvider(mcpProvider).catch((err: unknown) => {
-      console.warn('[ToolSearchPlugin] Failed to register McpToolProvider:', err);
-    });
-    mcpProvider
-      .warmUp()
-      .then(() => {
-        sessionRegistry.registerProviderTools(mcpProvider!.getTools());
-      })
-      .catch((err: unknown) => {
-        console.warn('[ToolSearchPlugin] Background MCP warm-up error:', err);
-      });
+    await vault.registerProvider(mcpProvider);
+    try {
+      await mcpProvider.warmUp();
+      sessionRegistry.registerProviderTools(mcpProvider.getTools());
+      if (typeof mcpProvider.getExecutableTools === 'function') {
+        Object.assign(tools, mcpProvider.getExecutableTools());
+      }
+    } catch (err: unknown) {
+      console.warn('[ToolSearchPlugin] Background MCP warm-up error:', err);
+    }
   };
 
   const pluginMcpConfig = opts.mcp?.servers ?? opts.mcpServers ?? opts.mcp;
   if (pluginMcpConfig && typeof pluginMcpConfig === 'object') {
-    initMcp(pluginMcpConfig as Record<string, import('./mcp/types.js').McpServerConfig>);
+    await initMcp(pluginMcpConfig as Record<string, import('./mcp/types.js').McpServerConfig>);
   }
   let deferrals = 0;
   let total = 0;
@@ -111,87 +150,10 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
       const mcpObj = (cfg as any)?.mcp;
       const topLevelMcp = mcpObj?.servers ?? mcpObj;
       if (topLevelMcp && typeof topLevelMcp === 'object' && !pluginMcpConfig) {
-        initMcp(topLevelMcp);
+        await initMcp(topLevelMcp);
       }
     },
-    tool: new Proxy(
-      {
-        tool_search: tool({
-          description: `Find deferred tools marked "${deferLabel}" by task, name, or prefix. Returns full tool IDs and parameter schemas.\nCall tool_search({ query: "<task or name>" }). For regex, use tool_search_regex({ pattern: "<regex>" }).`,
-          args: { query: tool.schema.string().describe('Task, tool name, or prefix.') },
-          async execute(args, context) {
-            if (args.query.length > 500) {
-              return `Query exceeds maximum length of 500 characters.`;
-            }
-            const sessionID = context?.sessionID;
-            await vault.awaitReady(searchTimeoutMs);
-            const allHits = await vault.query(args.query, vault.count || maxResults, searchTimeoutMs);
-            if (allHits.length === 0) return `No matches for "${args.query}". Try broader terms or tool_search_regex.`;
-
-            const processing = sessionRegistry.processSearchResult(sessionID, allHits, maxResults);
-            return processing.responseText;
-          },
-        }),
-        tool_search_regex: tool({
-          description: `Find tools by case-insensitive regex over IDs and descriptions. Returns full tool IDs and parameter schemas.\nCall tool_search_regex({ pattern: "<regex>" }). For task or name search, use tool_search({ query: "<task or name>" }).`,
-          args: { pattern: tool.schema.string().describe('Case-insensitive regex for tool IDs and descriptions.') },
-          async execute(args, context) {
-            if (args.pattern.length > MAX_REGEX_PATTERN_LENGTH) {
-              return `Pattern exceeds maximum length of ${MAX_REGEX_PATTERN_LENGTH} characters.`;
-            }
-            try {
-              new RegExp(args.pattern, 'i');
-            } catch (err) {
-              return `Invalid regex pattern "${args.pattern}": ${err instanceof Error ? err.message : String(err)}.`;
-            }
-            const sessionID = context?.sessionID;
-            await vault.awaitReady(searchTimeoutMs);
-            const allHits = vault.grep(args.pattern, vault.count || maxResults);
-            if (allHits.length === 0) return `No tools matched pattern "${args.pattern}".`;
-
-            const processing = sessionRegistry.processSearchResult(sessionID, allHits, maxResults);
-            return processing.responseText;
-          },
-        }),
-      },
-      {
-        get(target, prop, receiver) {
-          if (typeof prop === 'string') {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            if (prop in target) return (target as any)[prop];
-            const mcpTool = mcpProvider?.getExecutableTool(prop);
-            if (mcpTool) return mcpTool;
-          }
-          return Reflect.get(target, prop, receiver);
-        },
-        has(target, prop) {
-          if (typeof prop === 'string') {
-            if (prop in target) return true;
-            if (mcpProvider?.hasExecutableTool(prop)) return true;
-          }
-          return Reflect.has(target, prop);
-        },
-        ownKeys(target) {
-          const staticKeys = Reflect.ownKeys(target);
-          const mcpKeys = mcpProvider ? mcpProvider.getExecutableToolIds() : [];
-          return Array.from(new Set([...staticKeys, ...mcpKeys]));
-        },
-        getOwnPropertyDescriptor(target, prop) {
-          if (typeof prop === 'string' && prop in target) {
-            return Reflect.getOwnPropertyDescriptor(target, prop);
-          }
-          if (typeof prop === 'string' && mcpProvider?.hasExecutableTool(prop)) {
-            return {
-              configurable: true,
-              enumerable: true,
-              writable: false,
-              value: mcpProvider.getExecutableTool(prop),
-            };
-          }
-          return Reflect.getOwnPropertyDescriptor(target, prop);
-        },
-      },
-    ),
+    tool: tools,
     'tool.definition': async (input, output) => {
       if (SEARCH_IDS.has(input.toolID)) return;
       vault.add(input.toolID, output.description, output.parameters);
