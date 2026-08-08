@@ -110,7 +110,7 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mcpObj = (cfg as any)?.mcp;
       const topLevelMcp = mcpObj?.servers ?? mcpObj;
-      if (topLevelMcp && typeof topLevelMcp === 'object') {
+      if (topLevelMcp && typeof topLevelMcp === 'object' && !pluginMcpConfig) {
         initMcp(topLevelMcp);
       }
     },

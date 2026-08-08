@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { ToolProvider, ToolDefinition } from '../tool-provider.js';
 import type { McpServerConfig } from './types.js';
-import { AdapterCache } from './adapter-cache.js';
+import { AdapterCache, globalAdapterCache } from './adapter-cache.js';
 import { TransportFactory } from './transport-factory.js';
 import { LocalTransportConnector } from './transports/local-transport.js';
 import { RemoteTransportConnector } from './transports/remote-transport.js';
@@ -25,7 +25,7 @@ export class McpToolProvider implements ToolProvider {
 
   constructor(
     servers: Record<string, McpServerConfig> | McpServerConfig[],
-    cache = new AdapterCache(),
+    cache = globalAdapterCache,
     factory = new TransportFactory(),
   ) {
     const rawList = Array.isArray(servers)
