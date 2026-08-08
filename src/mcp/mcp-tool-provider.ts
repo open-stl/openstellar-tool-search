@@ -98,9 +98,6 @@ export class McpToolProvider implements ToolProvider {
             );
 
             this.executableTools.set(toolId, opencodeTool);
-            if (toolDef.name !== toolId) {
-              this.executableTools.set(toolDef.name, opencodeTool);
-            }
           }
         } catch (err) {
           // Log warning and continue with remaining servers

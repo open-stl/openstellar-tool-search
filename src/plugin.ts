@@ -123,9 +123,22 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     await vault.registerProvider(mcpProvider);
     try {
       await mcpProvider.warmUp();
-      sessionRegistry.registerProviderTools(mcpProvider.getTools());
+      const providerTools = mcpProvider.getTools();
+      sessionRegistry.registerProviderTools(providerTools);
       if (typeof mcpProvider.getExecutableTools === 'function') {
-        Object.assign(tools, mcpProvider.getExecutableTools());
+        const execs = mcpProvider.getExecutableTools();
+        for (const pt of providerTools) {
+          const execTool = execs[pt.id];
+          if (execTool) {
+            const rawDesc = pt.description;
+            if (pt.deferred !== false) {
+              sessionRegistry.registerTool(pt.id);
+              const firstSentence = getFirstSentence(rawDesc);
+              execTool.description = firstSentence ? `${firstSentence} ${deferLabel}` : deferLabel;
+            }
+            tools[pt.id] = execTool;
+          }
+        }
       }
     } catch (err: unknown) {
       console.warn('[ToolSearchPlugin] Background MCP warm-up error:', err);
