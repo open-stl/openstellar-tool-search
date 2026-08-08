@@ -365,7 +365,7 @@ describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
   async function createPluginInstance(options: PluginOptions = {}) {
     const ctx = makeCtx();
     const opts: PluginOptions = {
-      embedding: { enabled: false },
+      mode: 'keyword',
       ...options,
     };
     const plugin = ToolSearchPlugin as Plugin;

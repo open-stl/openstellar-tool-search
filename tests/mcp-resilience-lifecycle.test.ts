@@ -141,7 +141,7 @@ describe('MCP Resilience and Lifecycle', () => {
       const hooks = await ToolSearchPlugin(
         {} as any,
         {
-          mcpServers: {
+          mcp: {
             test: { type: 'remote', url: 'http://localhost:8080' },
           },
         },
@@ -165,7 +165,7 @@ describe('MCP Resilience and Lifecycle', () => {
       await ToolSearchPlugin(
         {} as any,
         {
-          mcpServers: {
+          mcp: {
             test: { type: 'remote', url: 'http://localhost:8080' },
           },
         },

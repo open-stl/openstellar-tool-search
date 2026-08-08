@@ -18,36 +18,20 @@ export interface Hit<T> {
 }
 
 export interface ToolSearchConfig {
-  /** Tools that are exempt from deferral (alias for `alwaysLoad`). */
-  pinned?: string[];
+  /** Tool IDs exempt from deferral (full descriptions always loaded). Default: [] */
   alwaysLoad?: string[];
 
-  /** Maximum search results returned per query (alias for `searchLimit`). Default: 10. */
+  /** Maximum search results returned per query. Default: 10 */
   maxResults?: number;
-  searchLimit?: number;
 
-  /** Operational search mode: 'hybrid' (BM25 + vectors) or 'keyword' (BM25 only). Default: 'hybrid'. */
+  /** Search mode: 'hybrid' (BM25 + vectors) or 'keyword' (BM25 only). Default: 'hybrid' */
   mode?: 'hybrid' | 'keyword';
 
+  /** Tools exempt from authorization resets (e.g. ['compress']). Default: ['compress'] */
   resetTools?: string[];
-  bm25?: Partial<ScoreParams>;
-  embedding?: {
-    enabled?: boolean;
-    model?: string;
-    threshold?: number;
-    quantized?: boolean;
-    dtype?: string;
-    cacheDir?: string;
-    cache?: boolean;
-    useWorker?: boolean;
-  };
-  deferDescription?: string;
-  searchTimeoutMs?: number;
-  mcpServers?: Record<string, McpServerConfig> | McpServerConfig[];
-  mcp?: {
-    servers?: Record<string, McpServerConfig> | McpServerConfig[];
-    [key: string]: unknown;
-  };
+
+  /** MCP server configurations matching OpenCode's native format. */
+  mcp?: Record<string, McpServerConfig>;
 }
 
 export interface EmbedConfig {

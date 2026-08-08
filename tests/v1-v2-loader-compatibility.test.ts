@@ -60,7 +60,7 @@ describe('OpenCode V1 & V2 Loader Compatibility Test Suite', () => {
 
   it('3. OpenCode V2 loader execution flow operates identically for tool registration and regex search', async () => {
     const ctx = { client: { tui: { showToast: vi.fn() } } };
-    const opts = { embedding: { enabled: false } };
+    const opts = { mode: 'keyword' };
 
     const v2Plugin = simulateOpenCodeV2Loader({ default: defaultPlugin })!;
     const hooks = await (v2Plugin as any).server(ctx, opts);
@@ -88,7 +88,7 @@ describe('OpenCode V1 & V2 Loader Compatibility Test Suite', () => {
 
   it('4. OpenCode V1 loader execution flow operates identically for tool registration and regex search', async () => {
     const ctx = { client: { tui: { showToast: vi.fn() } } };
-    const opts = { embedding: { enabled: false } };
+    const opts = { mode: 'keyword' };
 
     const legacyPlugins = simulateOpenCodeV1LegacyLoader({ default: defaultPlugin, ToolSearchPlugin });
     const serverFn = legacyPlugins[0];
@@ -121,10 +121,10 @@ describe('OpenCode V1 & V2 Loader Compatibility Test Suite', () => {
     expect(typeof (ToolSearchPlugin as any).server).toBe('function');
 
     const ctx = { client: { tui: { showToast: vi.fn() } } } as any;
-    const hooksDirect = await ToolSearchPlugin(ctx, { embedding: { enabled: false } } as any);
+    const hooksDirect = await ToolSearchPlugin(ctx, { mode: 'keyword' } as any);
     expect(hooksDirect.tool?.tool_search).toBeDefined();
 
-    const hooksViaServer = await (ToolSearchPlugin as any).server(ctx, { embedding: { enabled: false } } as any);
+    const hooksViaServer = await (ToolSearchPlugin as any).server(ctx, { mode: 'keyword' } as any);
     expect(hooksViaServer.tool?.tool_search).toBeDefined();
   });
 });

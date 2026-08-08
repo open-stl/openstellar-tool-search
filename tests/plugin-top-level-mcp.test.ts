@@ -24,7 +24,7 @@ vi.mock('../src/mcp/mcp-tool-provider.js', async (importOriginal) => {
 });
 
 describe('Top-level Standard MCP Config Hook Integration', () => {
-  it('reads top-level cfg.mcp from config hook if opts.mcpServers is not provided', async () => {
+  it('reads top-level cfg.mcp from config hook if opts.mcp is not provided', async () => {
     const mockCtx = {} as PluginInput;
     const hooks = await ToolSearchPlugin.server(mockCtx, {});
 

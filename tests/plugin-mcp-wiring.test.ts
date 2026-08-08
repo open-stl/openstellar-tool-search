@@ -25,10 +25,10 @@ vi.mock('../src/mcp/mcp-tool-provider.js', async (importOriginal) => {
 });
 
 describe('Plugin MCP Wiring & Background Warm-up', () => {
-  it('instantiates McpToolProvider when mcpServers option is provided', async () => {
+  it('instantiates McpToolProvider when mcp option is provided', async () => {
     const mockCtx = {} as PluginInput;
     const hooks = await ToolSearchPlugin.server(mockCtx, {
-      mcpServers: {
+      mcp: {
         notion: { type: 'remote', url: 'http://localhost:8080' },
       },
     });

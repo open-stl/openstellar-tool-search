@@ -42,29 +42,33 @@ function toast(
   }, 100);
 }
 
+const ALLOWED_CONFIG_KEYS = new Set(['alwaysLoad', 'maxResults', 'mode', 'resetTools', 'mcp']);
+
 const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promise<Hooks> => {
-  const opts = (options ?? {}) as ToolSearchConfig;
+  const rawOpts = (options ?? {}) as Record<string, unknown>;
+  for (const key of Object.keys(rawOpts)) {
+    if (!ALLOWED_CONFIG_KEYS.has(key)) {
+      console.warn(`[ToolSearchPlugin] Unknown or deprecated configuration key "${key}". Allowed keys: ${Array.from(ALLOWED_CONFIG_KEYS).join(', ')}.`);
+    }
+  }
+
+  const opts = rawOpts as ToolSearchConfig;
   const resetToolIDs = new Set(['compress', ...(opts.resetTools ?? [])]);
-  const maxResults = opts.maxResults ?? opts.searchLimit ?? 10;
-  const pinnedTools = opts.pinned ?? opts.alwaysLoad ?? [];
+  const maxResults = opts.maxResults ?? 10;
+  const alwaysLoadTools = opts.alwaysLoad ?? [];
   const isKeywordMode = opts.mode === 'keyword';
-  const deferLabel = opts.deferDescription ?? DEFAULT_DEFER;
-  const searchTimeoutMs = opts.searchTimeoutMs ?? 2000;
-  const embeddingCfg: Partial<EmbedConfig> = opts.embedding ?? {};
+  const deferLabel = DEFAULT_DEFER;
+  const searchTimeoutMs = 2000;
   const embedding = {
-    enabled: isKeywordMode ? false : (embeddingCfg.enabled ?? true),
-    ...embeddingCfg,
-    quantized: embeddingCfg.quantized ?? false,
-    useWorker: embeddingCfg.useWorker ?? true,
+    enabled: !isKeywordMode,
+    quantized: false,
+    useWorker: true,
   };
   const vault = new ToolVault({
-    k1: opts.bm25?.k1,
-    b: opts.bm25?.b,
-    cascadeThreshold: opts.bm25?.cascadeThreshold,
     embedding,
   });
   const sessionRegistry = new SessionToolRegistry({
-    alwaysOn: [...SEARCH_IDS, ...pinnedTools],
+    alwaysOn: [...SEARCH_IDS, ...alwaysLoadTools],
     resetTools: resetToolIDs,
   });
 
@@ -145,7 +149,8 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     }
   };
 
-  const pluginMcpConfig = opts.mcp?.servers ?? opts.mcpServers ?? opts.mcp;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pluginMcpConfig = (opts.mcp as any)?.servers ?? opts.mcp;
   if (pluginMcpConfig && typeof pluginMcpConfig === 'object') {
     await initMcp(pluginMcpConfig as Record<string, import('./mcp/types.js').McpServerConfig>);
   }

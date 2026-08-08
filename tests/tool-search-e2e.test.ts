@@ -153,7 +153,7 @@ function firstId(out: string): string {
 
 describe('E2E: tool_search (BM25 path)', () => {
   let fx: PluginFixture;
-  beforeAll(async () => { fx = await loadPlugin({ embedding: { enabled: false } }); });
+  beforeAll(async () => { fx = await loadPlugin({ mode: 'keyword' }); });
 
   it('1. Returns "Found N tool(s)" header', async () => {
     const out = await executeSearch(fx.toolSearch, { query: 'github' });
@@ -199,9 +199,9 @@ describe('E2E: tool_search (BM25 path)', () => {
     expect(out).toMatch(/^No matches for/);
   });
 
-  it('9. searchLimit config caps results (re-fires defHook on new instance)', async () => {
+  it('9. maxResults config caps results (re-fires defHook on new instance)', async () => {
     // Fresh plugin instance — re-fire defHook for fixtures so vault is populated
-    const fresh = await loadPlugin({ embedding: { enabled: false }, searchLimit: 1 });
+    const fresh = await loadPlugin({ mode: 'keyword', maxResults: 1 });
     for (const t of FIXTURE_TOOLS) {
       await fresh.hooks['tool.definition']!({ toolID: t.id }, {
         description: t.description,
@@ -216,7 +216,7 @@ describe('E2E: tool_search (BM25 path)', () => {
 
 describe('E2E: tool_search_regex', () => {
   let fx: PluginFixture;
-  beforeAll(async () => { fx = await loadPlugin({ embedding: { enabled: false } }); });
+  beforeAll(async () => { fx = await loadPlugin({ mode: 'keyword' }); });
 
   it('10. Returns "Found N tool(s)" header', async () => {
     const out = await executeSearch(fx.toolSearchRegex, { pattern: 'github' });
@@ -265,7 +265,7 @@ describe('E2E: tool_search_regex', () => {
 describe('E2E: tool.definition hook side-effects', () => {
   it('17. Deferred tools have description replaced with [deferred]', async () => {
     const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { mode: 'keyword' } as PluginOptions);
     const defHook = hooks['tool.definition']!;
     const out: any = { description: 'Real description', parameters: { type: 'object', properties: { x: { type: 'string', description: 'X desc' } } } };
     await defHook({ toolID: 'some_other_tool' }, out);
@@ -274,7 +274,7 @@ describe('E2E: tool.definition hook side-effects', () => {
 
   it('18. SEARCH_IDS (tool_search, tool_search_regex) are NEVER deferred', async () => {
     const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { mode: 'keyword' } as PluginOptions);
     const defHook = hooks['tool.definition']!;
     const out: any = { description: 'Real description of tool_search itself', parameters: { type: 'object', properties: { q: { type: 'string' } } } };
     await defHook({ toolID: 'tool_search' }, out);
@@ -283,7 +283,7 @@ describe('E2E: tool.definition hook side-effects', () => {
 
   it('19. defers top-level description but preserves parameter descriptions in place (reference preserved)', async () => {
     const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { mode: 'keyword' } as PluginOptions);
     const defHook = hooks['tool.definition']!;
     const params = { type: 'object', properties: { x: { type: 'string', description: 'Original X desc' } } };
     const out: any = { description: 'Real', parameters: params };
@@ -295,7 +295,7 @@ describe('E2E: tool.definition hook side-effects', () => {
 
   it('19b. parameter descriptions are preserved at any depth', async () => {
     const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { mode: 'keyword' } as PluginOptions);
     const defHook = hooks['tool.definition']!;
     const params = {
       type: 'object',
@@ -334,7 +334,7 @@ describe('E2E: tool.definition hook side-effects', () => {
 describe('E2E: system.transform hook', () => {
   it('20. Adds "Tools marked [deferred] are deferred" message when deferrals > 0', async () => {
     const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { mode: 'keyword' } as PluginOptions);
     const defHook = hooks['tool.definition']!;
     for (const t of FIXTURE_TOOLS.slice(0, 2)) {
       await defHook({ toolID: t.id }, { description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) });
@@ -352,7 +352,7 @@ describe('E2E: system.transform hook', () => {
 describe('E2E: skill authorization policy', () => {
   it('system prompt treats skill like every other deferred tool', async () => {
     const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false } } as PluginOptions);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { mode: 'keyword' } as PluginOptions);
     await hooks['tool.definition']!({ toolID: 'skill' }, { description: 'Run a skill', parameters: {} });
     const out: any = { system: [] };
     await hooks['experimental.chat.system.transform']!({} as any, out);
@@ -364,19 +364,9 @@ describe('E2E: skill authorization policy', () => {
 });
 
 describe('E2E: config options', () => {
-  it('21. deferDescription custom label replaces [deferred] with user value', async () => {
-    const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false }, deferDescription: '[hidden]' } as PluginOptions);
-    const defHook = hooks['tool.definition']!;
-    const out: any = { description: 'Real', parameters: { type: 'object', properties: { x: { type: 'string', description: 'X' } } } };
-    await defHook({ toolID: 'some_tool' }, out);
-    expect(out.description).toBe('Real [hidden]');
-    expect((out.parameters as any).properties.x.description).toBe('X');
-  });
-
   it('22. alwaysLoad exempts specific tools from [deferred] deferral', async () => {
     const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { embedding: { enabled: false }, alwaysLoad: ['important_tool'] } as PluginOptions);
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { mode: 'keyword', alwaysLoad: ['important_tool'] } as PluginOptions);
     const defHook = hooks['tool.definition']!;
     const important: any = { description: 'Important tool desc', parameters: { type: 'object', properties: { x: { type: 'string', description: 'X desc' } } } };
     await defHook({ toolID: 'important_tool' }, important);
@@ -387,13 +377,6 @@ describe('E2E: config options', () => {
     await defHook({ toolID: 'other_tool' }, other);
     expect(other.description).toBe('Other desc [deferred]');
     expect((other.parameters as any).properties.y.description).toBe('Y desc');
-  });
-
-  it('23. bm25.k1 and bm25.b config are accepted and produce results', async () => {
-    const fx = await loadPlugin({ embedding: { enabled: false }, bm25: { k1: 1.2, b: 0.75 } });
-    const out = await executeSearch(fx.toolSearch, { query: 'github' });
-    expect(out).toMatch(/^Found \d+ tool\(s\):/);
-    expect(firstId(out)).toMatch(/^github/);
   });
 });
 
@@ -434,7 +417,7 @@ describe('E2E: semantic search is default ON', () => {
 
 describe('E2E: cross-references in tool descriptions', () => {
   it('26. tool_search description tells the LLM when to use tool_search_regex (and vice versa)', async () => {
-    const fx = await loadPlugin({ embedding: { enabled: false } });
+    const fx = await loadPlugin({ mode: 'keyword' });
     expect(fx.toolSearch.description).toContain('tool_search_regex');
     expect(fx.toolSearchRegex.description).toContain('tool_search');
   });
@@ -442,13 +425,13 @@ describe('E2E: cross-references in tool descriptions', () => {
 
 describe('E2E: tool.execute.before pre-execution blocking', () => {
   it('27. Unauthorized deferred tool execution throws [Tool Search Required]', async () => {
-    const fx = await loadPlugin({ embedding: { enabled: false } });
+    const fx = await loadPlugin({ mode: 'keyword' });
     const beforeHook = fx.hooks['tool.execute.before']!;
     await expect(beforeHook({ tool: 'github_create_issue', sessionID: 'sess-e2e-block' } as any, {} as any)).rejects.toThrow('[Tool Search Required]');
   });
 
   it('28. Executing tool_search authorizes the tool and allows execution', async () => {
-    const fx = await loadPlugin({ embedding: { enabled: false } });
+    const fx = await loadPlugin({ mode: 'keyword' });
     const beforeHook = fx.hooks['tool.execute.before']!;
     const sessionID = 'sess-e2e-allow';
 
@@ -463,7 +446,7 @@ describe('E2E: tool.execute.before pre-execution blocking', () => {
   });
 
   it('29. Always-on search tools are exempt from pre-execution blocking', async () => {
-    const fx = await loadPlugin({ embedding: { enabled: false } });
+    const fx = await loadPlugin({ mode: 'keyword' });
     const beforeHook = fx.hooks['tool.execute.before']!;
     await expect(beforeHook({ tool: 'tool_search', sessionID: 'sess-e2e-exempt' } as any, {} as any)).resolves.toBeUndefined();
     await expect(beforeHook({ tool: 'tool_search_regex', sessionID: 'sess-e2e-exempt' } as any, {} as any)).resolves.toBeUndefined();

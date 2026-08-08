@@ -38,7 +38,7 @@ describe('ToolSearchPlugin update-check lifecycle', () => {
 
   it('rechecks after a later sequential completed session.created event', async () => {
     checkForUpdate.mockResolvedValue({ outcome: 'up-to-date', currentVersion: '0.2.0', latestVersion: '0.2.0' });
-    const hooks = await ToolSearchPlugin(createContext() as any, { embedding: { enabled: false } } as any);
+    const hooks = await ToolSearchPlugin(createContext() as any, { mode: 'keyword' } as any);
 
     await hooks.event!({ event: { type: 'session.created' } } as any);
     await hooks.event!({ event: { type: 'session.created' } } as any);
@@ -49,7 +49,7 @@ describe('ToolSearchPlugin update-check lifecycle', () => {
   it('deduplicates concurrent session.created events and awaits the shared promise', async () => {
     let resolveCheck!: (value: any) => void;
     checkForUpdate.mockReturnValueOnce(new Promise((resolve) => { resolveCheck = resolve; }));
-    const hooks = await ToolSearchPlugin(createContext() as any, { embedding: { enabled: false } } as any);
+    const hooks = await ToolSearchPlugin(createContext() as any, { mode: 'keyword' } as any);
 
     const first = hooks.event!({ event: { type: 'session.created' } } as any);
     const second = hooks.event!({ event: { type: 'session.created' } } as any);
@@ -68,7 +68,7 @@ describe('ToolSearchPlugin update-check lifecycle', () => {
     ['invalidation failure', { outcome: 'invalidation-failed', currentVersion: '0.1.0', latestVersion: '0.2.0', error: 'cache target unavailable' }],
   ])('retries after %s', async (_label, failedResult) => {
     checkForUpdate.mockResolvedValueOnce(failedResult as any).mockResolvedValueOnce({ outcome: 'up-to-date', currentVersion: '0.2.0', latestVersion: '0.2.0' });
-    const hooks = await ToolSearchPlugin(createContext() as any, { embedding: { enabled: false } } as any);
+    const hooks = await ToolSearchPlugin(createContext() as any, { mode: 'keyword' } as any);
 
     await hooks.event!({ event: { type: 'session.created' } } as any);
     await hooks.event!({ event: { type: 'session.created' } } as any);
@@ -86,7 +86,7 @@ describe('ToolSearchPlugin update-check lifecycle', () => {
   it('latches after staged update and suppresses later check and toast', async () => {
     const context = createContext();
     checkForUpdate.mockImplementation(async () => ({ outcome: 'update-staged' as const, currentVersion: '0.1.0', latestVersion: '0.2.0' }));
-    const hooks = await ToolSearchPlugin(context as any, { embedding: { enabled: false } } as any);
+    const hooks = await ToolSearchPlugin(context as any, { mode: 'keyword' } as any);
     await hooks.event!({ event: { type: 'session.created' } } as any);
     await vi.advanceTimersByTimeAsync(100);
     expect(context.client.tui.showToast).toHaveBeenCalledWith({ body: {
@@ -112,7 +112,7 @@ describe('ToolSearchPlugin update-check lifecycle', () => {
       { outcome: 'update-staged', currentVersion: '0.1.0', latestVersion: '0.2.0' },
     ];
     checkForUpdate.mockImplementation(async () => results.shift());
-    const hooks = await ToolSearchPlugin(context as any, { embedding: { enabled: false } } as any);
+    const hooks = await ToolSearchPlugin(context as any, { mode: 'keyword' } as any);
 
     for (let i = 0; i < 4; i += 1) {
       await hooks.event!({ event: { type: 'session.created' } } as any);
@@ -138,7 +138,7 @@ describe('ToolSearchPlugin update-check lifecycle', () => {
   it('notifies when the checker throws and permits a later retry', async () => {
     const context = createContext();
     checkForUpdate.mockRejectedValueOnce(new Error('unexpected checker failure')).mockResolvedValueOnce({ outcome: 'up-to-date', currentVersion: '0.2.0', latestVersion: '0.2.0' });
-    const hooks = await ToolSearchPlugin(context as any, { embedding: { enabled: false } } as any);
+    const hooks = await ToolSearchPlugin(context as any, { mode: 'keyword' } as any);
 
     await hooks.event!({ event: { type: 'session.created' } } as any);
     await hooks.event!({ event: { type: 'session.created' } } as any);
@@ -149,7 +149,7 @@ describe('ToolSearchPlugin update-check lifecycle', () => {
   });
 
   it('ignores non-session events', async () => {
-    const hooks = await ToolSearchPlugin(createContext() as any, { embedding: { enabled: false } } as any);
+    const hooks = await ToolSearchPlugin(createContext() as any, { mode: 'keyword' } as any);
 
     await hooks.event!({ event: { type: 'session.deleted' } } as any);
 

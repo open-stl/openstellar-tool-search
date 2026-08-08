@@ -29,7 +29,7 @@ describe('MCP Provider End-to-End Integration Suite', () => {
   it('registers deferred and non-deferred tools from MCP provider', async () => {
     const mockCtx = {} as PluginInput;
     const hooks = await ToolSearchPlugin.server(mockCtx, {
-      mcpServers: {
+      mcp: {
         notion: { type: 'remote', url: 'http://localhost:8080/sse', defer_loading: true },
         github: { type: 'remote', url: 'http://localhost:8081/sse', defer_loading: true },
         calc: { type: 'local', command: ['node', 'calc.js'], defer_loading: false },
@@ -48,7 +48,7 @@ describe('MCP Provider End-to-End Integration Suite', () => {
   it('enforces SessionToolRegistry execution protection on searched MCP tools', async () => {
     const mockCtx = {} as PluginInput;
     const hooks = await ToolSearchPlugin.server(mockCtx, {
-      mcpServers: {
+      mcp: {
         notion: { type: 'remote', url: 'http://localhost:8080/sse' },
       },
     });

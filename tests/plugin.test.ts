@@ -153,7 +153,7 @@ describe('ToolSearchPlugin', () => {
   // Embedding is enabled by default because BM25 cannot handle multilingual
   // queries (Thai, Japanese, etc.) — the tokenizer strips non-ASCII chars.
   // Semantic search via @xenova/transformers allows intent matching across
-  // languages. Disable with { embedding: { enabled: false } } in options.
+  // languages. Disable with { mode: 'keyword' } in options.
   // =========================================================================
   it('defaults to embedding enabled when no options provided', async () => {
     matcherInstantiated = false; // Reset from any prior test
@@ -173,13 +173,13 @@ describe('ToolSearchPlugin', () => {
     const previousCache = process.env.XDG_CACHE_HOME;
     process.env.XDG_CACHE_HOME = directory;
     try {
-      const first = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+      const first = await ToolSearchPlugin({} as any, { mode: 'keyword' });
       await first['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
       await first['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
       await (first.tool as any).tool_search_regex.execute({ pattern: '^foo_ide$' }, { sessionID: 'disk-session' });
       await new Promise((resolve) => setTimeout(resolve, 80));
 
-      const second = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+      const second = await ToolSearchPlugin({} as any, { mode: 'keyword' });
       await second['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
       await second['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
     await expect(
@@ -205,7 +205,7 @@ describe('ToolSearchPlugin', () => {
       writeFileSync(filePath, JSON.stringify({ 'legacy-json-session': {
         tools: ['{"kind":"canonical-tool","version":1,"canonicalId":"foo_ide"}'],
       } }), 'utf8');
-      const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+      const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
       await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
       await hooks['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
       await expect(
@@ -230,7 +230,7 @@ describe('ToolSearchPlugin', () => {
       };
       for (const legacyTool of ['foo_ide', '@canonical:foo_ide']) {
         writeLegacy(legacyTool);
-        const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+        const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
         await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
         await hooks['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
         // F11 fix: legacy _ide and @canonical: strings are migrated, not purged
@@ -255,13 +255,13 @@ describe('ToolSearchPlugin', () => {
     const loadSpy = vi.spyOn(AuthPersistence.prototype, 'load').mockReturnValue({ authorizations, lastSeen });
     const saveSpy = vi.spyOn(AuthPersistence.prototype, 'save').mockImplementation(() => {});
 
-    const first = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const first = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await first['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
     await first['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
     await (first.tool as any).tool_search_regex.execute({ pattern: '^foo_ide$' }, { sessionID: 'restart-session' });
     expect(Array.from(authorizations.get('restart-session') ?? []).some((entry: any) => entry && typeof entry === 'object' && entry.kind === 'canonical-tool' && entry.version === 1 && entry.canonicalId === 'foo_ide')).toBe(true);
 
-    const second = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const second = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await second['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
     await second['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
     const output = { output: 'Real result' };
@@ -277,7 +277,7 @@ describe('ToolSearchPlugin', () => {
     vi.spyOn(AuthPersistence.prototype, 'load').mockReturnValue({ authorizations, lastSeen });
     vi.spyOn(AuthPersistence.prototype, 'save').mockImplementation(() => {});
 
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
     await hooks['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
     // F11 fix: legacy _ide string is migrated to canonical object, not purged
@@ -287,7 +287,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('documents precise canonical tool policy guidance', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'policy_tool' }, { description: 'Policy tool', parameters: {} });
     const output = { system: [] as string[] };
     await hooks['experimental.chat.system.transform']!({ sessionID: 'policy-session' } as any, output as any);
@@ -300,7 +300,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('does not authorize a real tool after searching another canonical tool', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
     const regexTool = (hooks.tool as any).tool_search_regex;
     await regexTool.execute({ pattern: '^foo$' }, { sessionID: 'collision-session' });
@@ -312,7 +312,7 @@ describe('ToolSearchPlugin', () => {
 
   describe('skill tool authorization', () => {
     it('authorizes skill like every other deferred tool (session-wide, multiple invocations, reset by compress)', async () => {
-      const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+      const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
       await hooks['tool.definition']!({ toolID: 'skill' }, { description: 'Run a skill', parameters: {} });
       await hooks['tool.definition']!({ toolID: 'ordinary_tool' }, { description: 'Ordinary tool', parameters: {} });
 
@@ -381,7 +381,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('authorizes only the exact regex match among deferred siblings', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'tool_a' }, { description: 'Tool A', parameters: {} });
     await hooks['tool.definition']!({ toolID: 'tool_b' }, { description: 'Tool B', parameters: {} });
 
@@ -402,7 +402,7 @@ describe('ToolSearchPlugin', () => {
 
   describe('configurable resetTools', () => {
     it('resets session authorizations for default compress tool', async () => {
-      const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+      const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
 
       await hooks['tool.definition']!(
         { toolID: 'git_commit' },
@@ -435,7 +435,7 @@ describe('ToolSearchPlugin', () => {
 
     it('resets session authorizations for custom resetTools while maintaining additive semantics and session isolation', async () => {
       const hooks = await ToolSearchPlugin({} as any, {
-        embedding: { enabled: false },
+        mode: 'keyword',
         resetTools: ['custom_compaction'],
       });
 
@@ -484,7 +484,7 @@ describe('ToolSearchPlugin', () => {
 
     it('does not reset authorizations when a non-reset tool executes', async () => {
       const hooks = await ToolSearchPlugin({} as any, {
-        embedding: { enabled: false },
+        mode: 'keyword',
         resetTools: ['custom_compaction'],
       });
 
@@ -519,7 +519,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('resolves _ide cloaked tool via search and allows execution', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     // Register bash (original ID, as tool.definition fires with original)
     await hooks['tool.definition']!({ toolID: 'bash' }, { description: 'Execute bash command', parameters: {} });
 
@@ -538,7 +538,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('does not allow _ide variant when only canonical name was authorized for a different tool', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'bash' }, { description: 'Execute bash', parameters: {} });
     await hooks['tool.definition']!({ toolID: 'read' }, { description: 'Read file', parameters: {} });
 
@@ -555,7 +555,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('real _ide canonical tool is not confused with cloaked alias', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     // Register both foo (canonical) and foo_ide (real separate tool)
     await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
     await hooks['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo_ide tool', parameters: {} });
@@ -582,7 +582,7 @@ describe('ToolSearchPlugin', () => {
     // Before the F2 fix, baseID stripping would check alwaysOn.has('foo') and
     // falsely exempt foo_ide from the reminder gate.
     const hooks = await ToolSearchPlugin({} as any, {
-      embedding: { enabled: false },
+      mode: 'keyword',
       alwaysLoad: ['foo'],
     });
     await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
@@ -605,7 +605,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('blocks malformed/double-cloaked ID bash_ide_ide when base tool bash is deferred and unauthorized', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'bash' }, { description: 'Execute bash command', parameters: {} });
 
     const sessionID = 'double-cloak-session';
@@ -625,7 +625,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('tool_search_regex({ pattern: "_ide" }) returns only exact regex matches and does not act as wildcard', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'read' }, { description: 'Read file', parameters: {} });
     await hooks['tool.definition']!({ toolID: 'write' }, { description: 'Write file', parameters: {} });
 
@@ -650,7 +650,7 @@ describe('ToolSearchPlugin', () => {
   // =========================================================================
 
   it('returns No-Op Discovery response when all results are delivered and authorized (rule 36)', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
     await hooks['tool.definition']!({ toolID: 'bar' }, { description: 'Canonical bar', parameters: {} });
 
@@ -671,7 +671,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('returns unauthorized delivered tool again when authorization was reset (rule 41)', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
 
     const sessionID = 'reauth-session';
@@ -701,7 +701,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('delivers only new results and applies limit after filtering (rules 32-33)', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false }, searchLimit: 2 });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword', maxResults: 2 });
     await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
     await hooks['tool.definition']!({ toolID: 'bar' }, { description: 'Canonical bar', parameters: {} });
     await hooks['tool.definition']!({ toolID: 'baz' }, { description: 'Canonical baz', parameters: {} });
@@ -724,7 +724,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('no-match search does not record in delivery history (rule 37)', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
 
     const sessionID = 'nomatch-session';
@@ -741,7 +741,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('compaction clears delivery history (rule 42)', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
 
     const sessionID = 'compact-session';
@@ -765,7 +765,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('tool_search also applies delivery history filtering', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
 
     const sessionID = 'ts-session';
@@ -781,8 +781,8 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('F5: re-auth path limits results to maxResults when many tools lose auth simultaneously', async () => {
-    // Register 5 tools with searchLimit: 3
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false }, searchLimit: 3 });
+    // Register 5 tools with maxResults: 3
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword', maxResults: 3 });
     for (let i = 1; i <= 5; i++) {
       await hooks['tool.definition']!({ toolID: `tool${i}` }, { description: `Tool ${i}`, parameters: {} });
     }
@@ -814,7 +814,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   it('returns and authorizes both new tools and previously delivered but unauthorized tools', async () => {
-    const hooks = await ToolSearchPlugin({} as any, { embedding: { enabled: false } });
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'tool_a' }, { description: 'Tool A', parameters: {} });
     await hooks['tool.definition']!({ toolID: 'tool_b' }, { description: 'Tool B', parameters: {} });
 
