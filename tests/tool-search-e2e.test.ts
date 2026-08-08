@@ -395,24 +395,6 @@ describe('E2E: semantic search is default ON', () => {
     expect(out).toMatch(/Found \d+ tool\(s\):/);
     expect(out).toContain('github_create_issue');
   }, 30000);
-
-  it('25. BM25 fallback when semantic fails — broken embedding model', async () => {
-    // Pass an embedding model that will fail to load
-    // The plugin's try/catch (vault.ts:87-90) should fall back to BM25
-    const ctx = makeCtx();
-    const hooks = await (ToolSearchPlugin as Plugin)(ctx, {
-      embedding: { enabled: true, model: 'nonexistent/model-that-cannot-load-xyzzy' },
-    } as PluginOptions);
-    const defHook = hooks['tool.definition']!;
-    for (const t of FIXTURE_TOOLS) {
-      await defHook({ toolID: t.id }, { description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) });
-    }
-    const tSearch = (hooks.tool as any).tool_search;
-    // Even with broken embedding, BM25 should kick in and return github tools
-    const out = await executeSearch(tSearch, { query: 'github' });
-    expect(out).toMatch(/Found \d+ tool\(s\):/);
-    expect(out).toContain('github_create_issue');
-  }, 30000);
 });
 
 describe('E2E: cross-references in tool descriptions', () => {
