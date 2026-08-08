@@ -15,6 +15,7 @@ export class ToolVault {
   constructor(cfg: Partial<ScoreParams & { embedding?: EmbedConfig }> = {}) {
     this.store = new ToolStore();
     this.engine = new HybridSearchEngine(this.store, cfg);
+    this.store.onChanged(() => this.engine.notifyChanged());
   }
 
   add(id: string, description: string, parameters: unknown): void {

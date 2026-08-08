@@ -25,6 +25,17 @@ function extractParamTexts(schema: unknown, prefix = ''): string[] {
 export class ToolStore {
   private store = new Map<string, ToolMeta>();
   private providers: ToolProvider[] = [];
+  private changeListeners: (() => void)[] = [];
+
+  onChanged(callback: () => void): void {
+    this.changeListeners.push(callback);
+  }
+
+  private notifyChanged(): void {
+    for (const listener of this.changeListeners) {
+      listener();
+    }
+  }
 
   /**
    * Add or update a tool definition. Returns `true` if a new tool was added
@@ -36,6 +47,7 @@ export class ToolStore {
     const safe = description ?? '';
     if (!old || old.description !== safe) {
       this.store.set(id, { id, description: safe, parameters });
+      this.notifyChanged();
       return true;
     }
     return false;
@@ -77,7 +89,19 @@ export class ToolStore {
     const exact = this.store.get(id);
     if (exact) return exact;
     if (id.endsWith('_ide')) {
-      return this.store.get(id.slice(0, -4));
+      const match = this.store.get(id.slice(0, -4));
+      if (match) return match;
+    }
+    const normalized = id.replace(/[-_]/g, '_');
+    for (const [key, val] of this.store.entries()) {
+      if (key.replace(/[-_]/g, '_') === normalized) {
+        return val;
+      }
+    }
+    for (const [key, val] of this.store.entries()) {
+      if (key.endsWith(`_${id}`) || key.endsWith(`-${id}`)) {
+        return val;
+      }
     }
     return undefined;
   }
