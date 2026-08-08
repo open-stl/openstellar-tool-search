@@ -105,7 +105,7 @@ export class AdapterCache {
     const entries = Array.from(this.cache.values());
     this.cache.clear();
     this.inFlight.clear();
-    await Promise.all(
+    await Promise.allSettled(
       entries.map(async (entry) => {
         await closeTransport(entry.transport);
       }),
@@ -114,7 +114,7 @@ export class AdapterCache {
 
   async closeAllTransports(): Promise<void> {
     const entries = Array.from(this.cache.values());
-    await Promise.all(
+    await Promise.allSettled(
       entries.map(async (entry) => {
         await closeTransport(entry.transport);
       }),

@@ -45,4 +45,31 @@ describe('MCP Process Deduplication & Shared Global Cache', () => {
     // Clean up
     await globalAdapterCache.clear();
   });
+
+  it('closes all transports concurrently even if one transport close errors', async () => {
+    const errorTransport = {
+      close: vi.fn().mockImplementation(async () => {
+        throw new Error('Close failure');
+      }),
+    };
+    const healthyTransport = {
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+
+    globalAdapterCache.set('err_srv', {
+      tools: {},
+      transport: errorTransport as any,
+      client: {} as any,
+    });
+    globalAdapterCache.set('ok_srv', {
+      tools: {},
+      transport: healthyTransport as any,
+      client: {} as any,
+    });
+
+    // clear() should close all without throwing
+    await expect(globalAdapterCache.clear()).resolves.toBeUndefined();
+    expect(errorTransport.close).toHaveBeenCalledTimes(1);
+    expect(healthyTransport.close).toHaveBeenCalledTimes(1);
+  });
 });

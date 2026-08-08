@@ -46,10 +46,9 @@ export class McpToolProvider implements ToolProvider {
       return this.warmUpPromise;
     }
     this.warmUpPromise = (async () => {
-      const allTools: ToolDefinition[] = [];
-
-      for (const serverConfig of this.servers) {
+      const serverTasks = this.servers.map(async (serverConfig) => {
         const serverName = serverConfig.name ?? 'unnamed';
+        const serverTools: ToolDefinition[] = [];
         try {
           const client = new Client(
             { name: 'openstellar-tool-search', version: '1.0.0' },
@@ -68,7 +67,7 @@ export class McpToolProvider implements ToolProvider {
             const isDeferred = serverConfig.defer_loading ?? serverConfig.deferred ?? true;
             const toolId = sanitizeToolId(serverName, toolDef.name);
 
-            allTools.push({
+            serverTools.push({
               id: toolId,
               description: toolDef.description ?? '',
               parameters: toolDef.inputSchema ?? {},
@@ -78,6 +77,15 @@ export class McpToolProvider implements ToolProvider {
         } catch (err) {
           // Log warning and continue with remaining servers
           console.warn(`[McpToolProvider] Failed to initialize server ${serverName}:`, err);
+        }
+        return serverTools;
+      });
+
+      const results = await Promise.allSettled(serverTasks);
+      const allTools: ToolDefinition[] = [];
+      for (const res of results) {
+        if (res.status === 'fulfilled') {
+          allTools.push(...res.value);
         }
       }
 

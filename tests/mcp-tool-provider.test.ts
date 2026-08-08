@@ -90,4 +90,85 @@ describe('McpToolProvider', () => {
       ]),
     );
   });
+
+  it('warms up multiple servers concurrently in max single-server time', async () => {
+    const mockClient = {
+      listTools: vi.fn().mockResolvedValue({
+        tools: [{ name: 'test_tool', description: 'Test' }],
+      }),
+    };
+
+    const mockFactory: Partial<TransportFactory> = {
+      register: vi.fn(),
+      connect: vi.fn().mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 40));
+        return { close: () => {} } as Transport;
+      }),
+    };
+
+    const mockCache: Partial<AdapterCache> = {
+      getServerKey: vi.fn((s) => s.name),
+      getOrCreate: vi.fn().mockImplementation(async (_key, creator) => {
+        const entry = await creator();
+        return { ...entry, client: mockClient as any };
+      }),
+    };
+
+    const provider = new McpToolProvider(
+      {
+        srv1: { type: 'remote', url: 'http://localhost:8081' },
+        srv2: { type: 'remote', url: 'http://localhost:8082' },
+        srv3: { type: 'remote', url: 'http://localhost:8083' },
+      },
+      mockCache as AdapterCache,
+      mockFactory as TransportFactory,
+    );
+
+    const start = Date.now();
+    const tools = await provider.warmUp();
+    const duration = Date.now() - start;
+
+    expect(tools.length).toBe(3);
+    // Concurrently 3 x 40ms should finish in < 100ms (not sequential 120ms+)
+    expect(duration).toBeLessThan(110);
+  });
+
+  it('isolates failures when a server fails to connect and returns healthy tools', async () => {
+    const mockFactory: Partial<TransportFactory> = {
+      register: vi.fn(),
+      connect: vi.fn().mockImplementation(async (cfg) => {
+        if (cfg.name === 'bad_srv') {
+          throw new Error('ECONNREFUSED');
+        }
+        return { close: () => {} } as Transport;
+      }),
+    };
+
+    const mockClient = {
+      listTools: vi.fn().mockResolvedValue({
+        tools: [{ name: 'healthy_tool', description: 'Healthy' }],
+      }),
+    };
+
+    const mockCache: Partial<AdapterCache> = {
+      getServerKey: vi.fn((s) => s.name),
+      getOrCreate: vi.fn().mockImplementation(async (_key, creator) => {
+        const entry = await creator();
+        return { ...entry, client: mockClient as any };
+      }),
+    };
+
+    const provider = new McpToolProvider(
+      {
+        good_srv: { type: 'remote', url: 'http://localhost:8081' },
+        bad_srv: { type: 'remote', url: 'http://localhost:8082' },
+      },
+      mockCache as AdapterCache,
+      mockFactory as TransportFactory,
+    );
+
+    const tools = await provider.warmUp();
+    expect(tools.length).toBe(1);
+    expect(tools[0].id).toBe('good_srv_healthy_tool');
+  });
 });
