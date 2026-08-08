@@ -295,12 +295,22 @@ export class SemanticMatcher {
 
     if (validEntries.length > 0) {
       const BATCH_SIZE = 32;
+      const chunks: { id: string; text: string }[][] = [];
       for (let i = 0; i < validEntries.length; i += BATCH_SIZE) {
-        const chunk = validEntries.slice(i, i + BATCH_SIZE);
-        const texts = chunk.map((c) => c.text);
+        chunks.push(validEntries.slice(i, i + BATCH_SIZE));
+      }
 
-        try {
-          const out = await this.runInference(texts, { pooling: 'mean', normalize: true });
+      const chunkTasks = chunks.map(async (chunk) => {
+        const texts = chunk.map((c) => c.text);
+        const out = await this.runInference(texts, { pooling: 'mean', normalize: true });
+        return { chunk, out };
+      });
+
+      const results = await Promise.allSettled(chunkTasks);
+      for (let i = 0; i < results.length; i++) {
+        const res = results[i];
+        if (res.status === 'fulfilled') {
+          const { chunk, out } = res.value;
           const data = out.data;
           const count = chunk.length;
           const d = (out.dims && out.dims.length >= 2)
@@ -311,12 +321,11 @@ export class SemanticMatcher {
             const rawVec = data.subarray(k * d, (k + 1) * d);
             this.vectors.set(chunk[k].id, this.normalize(rawVec));
           }
-        } catch (err) {
-          this.loadError = err instanceof Error ? err : new Error(String(err));
-          for (let j = i; j < validEntries.length; j++) {
-            this.vectors.set(validEntries[j].id, new Float32Array(this.dims));
+        } else {
+          this.loadError = res.reason instanceof Error ? res.reason : new Error(String(res.reason));
+          for (const item of chunks[i]) {
+            this.vectors.set(item.id, new Float32Array(this.dims));
           }
-          break;
         }
       }
     }

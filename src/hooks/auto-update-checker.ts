@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { readFileSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, rmSync, promises as fsPromises } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { env } from 'node:process';
 import { gt, valid } from 'semver';
@@ -122,6 +122,27 @@ export function invalidatePackageCache(
         }
     }
     return !removalFailed;
+}
+
+export async function invalidatePackageCacheAsync(
+    cacheRoots = getPossibleCacheRoots(),
+): Promise<boolean> {
+    const seen = new Set<string>();
+    const tasks: Promise<boolean>[] = [];
+
+    for (const root of cacheRoots) {
+        if (seen.has(root)) continue;
+        seen.add(root);
+        for (const target of getPackageCacheTargets(root)) {
+            tasks.push(
+                fsPromises.rm(target, { recursive: true, force: true })
+                    .then(() => true)
+                    .catch(() => false)
+            );
+        }
+    }
+    const results = await Promise.allSettled(tasks);
+    return results.every((r) => r.status === 'fulfilled' && r.value === true);
 }
 
 export function isNewerVersion(latest: string, current: string): boolean {
