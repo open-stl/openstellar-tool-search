@@ -1,10 +1,12 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { tool } from '@opencode-ai/plugin';
 import type { ToolProvider, ToolDefinition } from '../tool-provider.js';
 import type { McpServerConfig } from './types.js';
 import { AdapterCache, globalAdapterCache } from './adapter-cache.js';
 import { TransportFactory } from './transport-factory.js';
 import { LocalTransportConnector } from './transports/local-transport.js';
 import { RemoteTransportConnector } from './transports/remote-transport.js';
+import { convertMcpTool } from './convert-mcp-tool.js';
 
 export function sanitizeToolId(serverName: string, toolName: string): string {
   const cleanServer = serverName.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -20,6 +22,7 @@ export class McpToolProvider implements ToolProvider {
   private cache: AdapterCache;
   private factory: TransportFactory;
   private tools: ToolDefinition[] = [];
+  private executableTools = new Map<string, ReturnType<typeof tool>>();
   private listeners: ((tools: ToolDefinition[]) => void)[] = [];
   private warmUpPromise: Promise<ToolDefinition[]> | null = null;
 
@@ -73,6 +76,31 @@ export class McpToolProvider implements ToolProvider {
               parameters: toolDef.inputSchema ?? {},
               deferred: isDeferred,
             });
+
+            const opencodeTool = convertMcpTool(
+              {
+                name: toolDef.name,
+                description: toolDef.description,
+                inputSchema: toolDef.inputSchema,
+              },
+              async () => {
+                const entry = await this.cache.getOrCreate(serverKey, async () => {
+                  const freshClient = new Client(
+                    { name: 'openstellar-tool-search', version: '1.0.0' },
+                    { capabilities: {} },
+                  );
+                  const transport = await this.factory.connect({ ...serverConfig, name: serverName }, freshClient);
+                  return { tools: {}, transport, client: freshClient };
+                });
+                return entry.client;
+              },
+              serverConfig.timeout ?? 60_000,
+            );
+
+            this.executableTools.set(toolId, opencodeTool);
+            if (toolDef.name !== toolId) {
+              this.executableTools.set(toolDef.name, opencodeTool);
+            }
           }
         } catch (err) {
           // Log warning and continue with remaining servers
@@ -117,6 +145,27 @@ export class McpToolProvider implements ToolProvider {
 
   getTools(): ToolDefinition[] {
     return this.tools;
+  }
+
+  getExecutableTool(id: string): ReturnType<typeof tool> | undefined {
+    const direct = this.executableTools.get(id);
+    if (direct) return direct;
+    const normalized = id.replace(/[-_]/g, '_');
+    for (const [key, t] of this.executableTools.entries()) {
+      if (key.replace(/[-_]/g, '_') === normalized) return t;
+    }
+    for (const [key, t] of this.executableTools.entries()) {
+      if (key.endsWith(`_${id}`) || key.endsWith(`-${id}`)) return t;
+    }
+    return undefined;
+  }
+
+  hasExecutableTool(id: string): boolean {
+    return Boolean(this.getExecutableTool(id));
+  }
+
+  getExecutableToolIds(): string[] {
+    return Array.from(this.executableTools.keys());
   }
 
   onUpdate(callback: (tools: ToolDefinition[]) => void): void {
