@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ToolSearchPlugin } from '../src/plugin.js';
+import { parseMcpConfig } from '../src/hooks/mcp-wiring.js';
 import type { PluginInput } from '@opencode-ai/plugin';
 
 vi.mock('../src/mcp/mcp-tool-provider.js', async (importOriginal) => {
@@ -35,5 +36,29 @@ describe('Plugin MCP Wiring & Background Warm-up', () => {
 
     expect(hooks.tool).toHaveProperty('tool_search');
     expect(hooks.tool).toHaveProperty('tool_search_regex');
+  });
+});
+
+describe('parseMcpConfig rejects invalid mcp shapes', () => {
+  it('returns undefined for an array (V1 shape is refused)', () => {
+    expect(
+      parseMcpConfig([{ name: 'srv', type: 'remote', url: 'http://localhost:8080' }]),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined for an array wrapped in { servers: [...] }', () => {
+    expect(
+      parseMcpConfig({ servers: [{ name: 'srv', type: 'remote', url: 'http://localhost:8080' }] }),
+    ).toBeUndefined();
+  });
+
+  it('accepts a bare server map', () => {
+    const map = { srv: { type: 'remote', url: 'http://localhost:8080' } };
+    expect(parseMcpConfig(map)).toBe(map);
+  });
+
+  it('accepts the V2 { servers: {...} } wrapper', () => {
+    const inner = { srv: { type: 'remote', url: 'http://localhost:8080' } };
+    expect(parseMcpConfig({ servers: inner })).toBe(inner);
   });
 });

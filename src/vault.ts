@@ -4,9 +4,16 @@ import { ToolStore } from './tool-store.js';
 import { HybridSearchEngine } from './search-engine.js';
 
 /**
- * High-level facade for tool catalog storage and hybrid search execution.
- * Delegating to deep modules `ToolStore` (catalog storage, parameter text extraction,
- * alias resolution) and `HybridSearchEngine` (BM25, Semantic matcher, RRF fusion, cascade gates).
+ * Single caller-facing seam for the tool catalog and search.
+ *
+ * ToolVault owns two deep modules behind it — `ToolStore` (catalog storage,
+ * parameter text extraction, alias resolution) and `HybridSearchEngine`
+ * (BM25, semantic matcher, RRF fusion, cascade gates) — and exposes only the
+ * operations the plugin needs: ingest, await readiness, discover (hybrid
+ * query or regex grep), resolve aliases, and semantic prebuild. Catalog
+ * invalidation is centralized in the constructor wiring: every changed add
+ * fires exactly one `engine.notifyChanged()`, so `add`/`registerProvider`
+ * must not notify the engine again.
  */
 export class ToolVault {
   private store: ToolStore;
@@ -19,14 +26,11 @@ export class ToolVault {
   }
 
   add(id: string, description: string, parameters: unknown): void {
-    if (this.store.add(id, description, parameters)) {
-      this.engine.notifyChanged();
-    }
+    this.store.add(id, description, parameters);
   }
 
   async registerProvider(provider: ToolProvider): Promise<void> {
     await this.store.registerProvider(provider);
-    this.engine.notifyChanged();
   }
 
   awaitReady(timeoutMs?: number): Promise<void> {

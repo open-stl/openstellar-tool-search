@@ -1,21 +1,18 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { tool } from '@opencode-ai/plugin';
 import type { ToolProvider, ToolDefinition } from '../tool-provider.js';
 import type { McpServerConfig } from './types.js';
+import type { ServerCacheEntry } from './adapter-cache.js';
 import { AdapterCache, globalAdapterCache } from './adapter-cache.js';
 import { TransportFactory } from './transport-factory.js';
 import { LocalTransportConnector } from './transports/local-transport.js';
 import { RemoteTransportConnector } from './transports/remote-transport.js';
-import { convertMcpTool } from './convert-mcp-tool.js';
+import { createMcpConnection } from './server-connection.js';
+import { adaptMcpTool, sanitizeToolId } from './mcp-tool-adapter.js';
 
-export function sanitizeToolId(serverName: string, toolName: string): string {
-  const cleanServer = serverName.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const cleanTool = toolName.toLowerCase();
-  if (cleanTool.startsWith(cleanServer + '_') || cleanTool.startsWith(cleanServer + '-')) {
-    return toolName;
-  }
-  return `${serverName}_${toolName}`;
-}
+export { sanitizeToolId } from './mcp-tool-adapter.js';
+
+const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
+const UNNAMED_SERVER = 'unnamed';
 
 export class McpToolProvider implements ToolProvider {
   private servers: McpServerConfig[];
@@ -44,60 +41,51 @@ export class McpToolProvider implements ToolProvider {
     this.factory.register('remote', new RemoteTransportConnector());
   }
 
+  /**
+   * Resolves the cached MCP connection for a server, connecting (and caching)
+   * a fresh client + transport when no live entry exists. Shared by warm-up and
+   * the executable-tool client getter so reconnect behavior is identical.
+   */
+  private async getConnection(
+    server: McpServerConfig,
+    serverName: string,
+  ): Promise<ServerCacheEntry> {
+    const serverKey = this.cache.getServerKey({ ...server, name: serverName });
+    return this.cache.getOrCreate(serverKey, () =>
+      createMcpConnection({ ...server, name: serverName }, (cfg, client) =>
+        this.factory.connect(cfg, client),
+      ).then(({ client, transport }) => ({ tools: {}, transport, client })),
+    );
+  }
+
   warmUp(): Promise<ToolDefinition[]> {
     if (this.warmUpPromise) {
       return this.warmUpPromise;
     }
     this.warmUpPromise = (async () => {
       const serverTasks = this.servers.map(async (serverConfig) => {
-        const serverName = serverConfig.name ?? 'unnamed';
+        const serverName = serverConfig.name ?? UNNAMED_SERVER;
         const serverTools: ToolDefinition[] = [];
         try {
-          const client = new Client(
-            { name: 'openstellar-tool-search', version: '1.0.0' },
-            { capabilities: {} },
-          );
-          const serverKey = this.cache.getServerKey({ ...serverConfig, name: serverName });
-
-          const cacheEntry = await this.cache.getOrCreate(serverKey, async () => {
-            const transport = await this.factory.connect({ ...serverConfig, name: serverName }, client);
-            return { tools: {}, transport, client };
-          });
-
+          const cacheEntry = await this.getConnection(serverConfig, serverName);
           const mcpToolsResult = await cacheEntry.client.listTools();
 
           for (const toolDef of mcpToolsResult.tools) {
             const isDeferred = serverConfig.defer_loading ?? serverConfig.deferred ?? true;
-            const toolId = sanitizeToolId(serverName, toolDef.name);
 
-            serverTools.push({
-              id: toolId,
-              description: toolDef.description ?? '',
-              parameters: toolDef.inputSchema ?? {},
-              deferred: isDeferred,
-            });
-
-            const opencodeTool = convertMcpTool(
-              {
-                name: toolDef.name,
-                description: toolDef.description,
-                inputSchema: toolDef.inputSchema,
-              },
+            const { definition, executable } = adaptMcpTool(
+              toolDef,
+              serverName,
+              isDeferred,
               async () => {
-                const entry = await this.cache.getOrCreate(serverKey, async () => {
-                  const freshClient = new Client(
-                    { name: 'openstellar-tool-search', version: '1.0.0' },
-                    { capabilities: {} },
-                  );
-                  const transport = await this.factory.connect({ ...serverConfig, name: serverName }, freshClient);
-                  return { tools: {}, transport, client: freshClient };
-                });
+                const entry = await this.getConnection(serverConfig, serverName);
                 return entry.client;
               },
-              serverConfig.timeout ?? 60_000,
+              serverConfig.timeout ?? DEFAULT_TOOL_TIMEOUT_MS,
             );
 
-            this.executableTools.set(toolId, opencodeTool);
+            serverTools.push(definition);
+            this.executableTools.set(definition.id, executable);
           }
         } catch (err) {
           // Log warning and continue with remaining servers

@@ -96,15 +96,30 @@ export class HybridSearchEngine {
         const result = await this.runSemanticWithTimeout(text, bm25Hits, limit, timeoutMs);
         if (result) return result;
       } else {
-        await this.buildSemantic();
-        if (this.semanticStale) await this.buildSemantic();
-        const semanticScores = await this.semantic.locate(text);
-        if (semanticScores.size > 0) return this.fuseRRF(bm25Hits, semanticScores, limit);
+        const result = await this.runSemantic(text, bm25Hits, limit);
+        if (result) return result;
       }
     } catch {
       // Internal recoverable error — fail open to BM25
     }
     return bm25Hits;
+  }
+
+  /**
+   * Build the semantic index (retrying once if it went stale mid-build), locate
+   * nearest entries, and fuse with BM25 via RRF. Returns null when there are no
+   * semantic scores to fuse, so the caller falls back to BM25.
+   */
+  private async runSemantic(
+    text: string,
+    bm25Hits: ToolMeta[],
+    limit: number,
+  ): Promise<ToolMeta[] | null> {
+    await this.buildSemantic();
+    if (this.semanticStale) await this.buildSemantic();
+    const semanticScores = await this.semantic!.locate(text);
+    if (semanticScores.size > 0) return this.fuseRRF(bm25Hits, semanticScores, limit);
+    return null;
   }
 
   private async runSemanticWithTimeout(
@@ -119,20 +134,15 @@ export class HybridSearchEngine {
     });
     const work = (async (): Promise<ToolMeta[] | null> => {
       try {
-        await this.buildSemantic();
-        if (this.semanticStale) await this.buildSemantic();
-        const semanticScores = await this.semantic!.locate(text);
-        if (semanticScores.size > 0) return this.fuseRRF(bm25Hits, semanticScores, limit);
-        return bm25Hits;
+        const result = await this.runSemantic(text, bm25Hits, limit);
+        return result ?? bm25Hits;
       } catch {
         return bm25Hits;
       }
     })();
-    try {
-      const winner = await Promise.race([work, timeout]);
-      if (timer) clearTimeout(timer);
-      return winner === 'timeout' ? null : (winner ?? bm25Hits);
-    } finally {}
+    const winner = await Promise.race([work, timeout]);
+    if (timer) clearTimeout(timer);
+    return winner === 'timeout' ? null : (winner ?? bm25Hits);
   }
 
   private fuseRRF(

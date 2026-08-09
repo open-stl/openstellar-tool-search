@@ -378,4 +378,66 @@ describe('ToolVault', () => {
       expect(hits.map((h) => h.id)).toContain('github_create_issue');
     });
   });
+
+  describe('catalog invalidation is centralized (single notify seam)', () => {
+    // Characterizes the facade duplication fix: ToolVault must not notify the
+    // engine directly on add/registerProvider — ToolStore's change wiring is
+    // the single source of invalidation. Each *changed* add fires exactly one
+    // engine.notifyChanged(); no-op adds fire none.
+    function spyEngine(v: ToolVault) {
+      return vi.spyOn(
+        (v as unknown as { engine: { notifyChanged: () => void } }).engine,
+        'notifyChanged',
+      );
+    }
+
+    it('add invalidates the engine exactly once (no facade double-notify)', () => {
+      const v = new ToolVault();
+      const spy = spyEngine(v);
+      v.add('read', 'Read a file', {});
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-adding an unchanged description does not invalidate the engine', () => {
+      const v = new ToolVault();
+      const spy = spyEngine(v);
+      v.add('read', 'Read a file', {});
+      v.add('read', 'Read a file', {});
+      v.add('read', null as unknown as string, {});
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('registerProvider invalidates the engine once per changed tool', async () => {
+      const v = new ToolVault();
+      const spy = spyEngine(v);
+      const provider = {
+        getTools: () => [
+          { id: 'a', description: 'Tool A', parameters: {} },
+          { id: 'b', description: 'Tool B', parameters: {} },
+        ],
+      };
+      await v.registerProvider(provider);
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    it('provider onUpdate invalidates the engine only when tools change', async () => {
+      const v = new ToolVault();
+      const spy = spyEngine(v);
+      type Def = { id: string; description: string; parameters: unknown };
+      let listener: ((tools: Def[]) => void) | undefined;
+      const provider = {
+        getTools: () => [{ id: 'initial', description: 'Initial', parameters: {} }] as Def[],
+        onUpdate: (cb: (tools: Def[]) => void) => { listener = cb; },
+      };
+      await v.registerProvider(provider);
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      listener?.([{ id: 'dynamic', description: 'Dynamic', parameters: {} }]);
+      expect(spy).toHaveBeenCalledTimes(2);
+
+      // Same description again → nothing changed → no invalidation.
+      listener?.([{ id: 'dynamic', description: 'Dynamic', parameters: {} }]);
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+  });
 });

@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sanitizeToolId } from '../src/mcp/mcp-tool-provider.js';
 import { ToolSearchPlugin } from '../src/plugin.js';
+import { toast } from '../src/hooks/toast.js';
 import type { PluginInput } from '@opencode-ai/plugin';
 
 describe('Code Review Standards & Spec Remediations', () => {
@@ -20,5 +21,47 @@ describe('Code Review Standards & Spec Remediations', () => {
     const longQuery = 'q'.repeat(501);
     const result = await searchTool.execute({ query: longQuery }, { sessionID: 'sess-query-limit' });
     expect(result).toContain('exceeds maximum length of 500 characters');
+  });
+
+  describe('toast swallows host errors', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.runOnlyPendingTimers();
+      vi.useRealTimers();
+    });
+
+    it('swallows synchronous host errors from showToast', () => {
+      const ctx = {
+        client: {
+          tui: {
+            showToast: vi.fn(() => {
+              throw new Error('TUI not attached');
+            }),
+          },
+        },
+      };
+
+      expect(() => toast(ctx as unknown as PluginInput, 'Tool Search', 'boom', 'info', 1000)).not.toThrow();
+      expect(() => vi.advanceTimersByTime(100)).not.toThrow();
+      expect(ctx.client.tui.showToast).toHaveBeenCalledTimes(1);
+    });
+
+    it('still swallows async rejections from showToast', async () => {
+      const ctx = {
+        client: {
+          tui: {
+            showToast: vi.fn(() => Promise.reject(new Error('async host failure'))),
+          },
+        },
+      };
+
+      toast(ctx as unknown as PluginInput, 'Tool Search', 'boom', 'info', 1000);
+      await vi.advanceTimersByTimeAsync(100);
+      // No unhandled rejection; the deferred toast simply never surfaces.
+      expect(ctx.client.tui.showToast).toHaveBeenCalledTimes(1);
+    });
   });
 });
