@@ -53,4 +53,4 @@ Triage uses the default label vocabulary (`needs-triage`, `needs-info`, `ready-f
 
 ### Domain docs
 
-This repository uses a single-context layout with `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
+This repository uses a focused plugin layout centered on `src/`, `tests/`, and package/build configuration. Keep durable project guidance in `AGENTS.md` and the README.

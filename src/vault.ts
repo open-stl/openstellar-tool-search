@@ -29,11 +29,15 @@ export class ToolVault {
     this.store.add(id, description, parameters);
   }
 
+  remove(id: string): boolean {
+    return this.store.remove(id);
+  }
+
   async registerProvider(provider: ToolProvider): Promise<void> {
     await this.store.registerProvider(provider);
   }
 
-  awaitReady(timeoutMs?: number): Promise<void> {
+  awaitReady(timeoutMs?: number): Promise<boolean> {
     return this.store.awaitReady(timeoutMs);
   }
 

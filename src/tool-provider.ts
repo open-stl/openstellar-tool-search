@@ -20,6 +20,9 @@ export interface ToolProvider {
 
   /**
    * Await until provider is ready or warm-up finishes.
+   * Resolves `true` when the provider has settled (ready / warm-up complete,
+   * or nothing to warm up); resolves `false` when `timeoutMs` elapsed first —
+   * the provider is still warming up.
    */
-  awaitReady?(timeoutMs?: number): Promise<void>;
+  awaitReady?(timeoutMs?: number): Promise<boolean>;
 }

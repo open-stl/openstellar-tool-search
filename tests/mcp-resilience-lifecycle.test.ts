@@ -105,6 +105,7 @@ describe('MCP Resilience and Lifecycle', () => {
         getTools: () => [],
         awaitReady: async (_timeoutMs?: number) => {
           readyCalled = true;
+          return true;
         },
       };
 

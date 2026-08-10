@@ -11,8 +11,51 @@ import { adaptMcpTool, sanitizeToolId } from './mcp-tool-adapter.js';
 
 export { sanitizeToolId } from './mcp-tool-adapter.js';
 
+/**
+ * Enabled-server filter (V2 `disabled: true` / V1 `enabled: false`). Shared by
+ * the provider (server list) and the wiring (placeholder registration) so the
+ * filter lives in one place.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function isServerEnabled(s: any): boolean {
+  return s.disabled !== true && s.enabled !== false;
+}
+
 const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
 const UNNAMED_SERVER = 'unnamed';
+/**
+ * Per-server warm-up ceiling. A server still unsettled at its ceiling is CUT
+ * (fail-open, contributes no tools) and a console.warn names it. Must exceed
+ * the search executors' combined budget (2s + 3s) AND real slow servers
+ * (~10.5s agentmemory) so they settle before the factory returns — 60s does.
+ * Injectable per-provider (and per-plugin via preWarmMs) for tests.
+ */
+export const DEFAULT_WARMUP_TIMEOUT_MS = 60_000;
+
+/**
+ * Race `promise` against a timeout, resolving `false` when the timer wins.
+ * The timer is cleared in `finally` on settle so no dangling handle holds the
+ * event loop. `null` on settle frees the reference. The timer is also
+ * registered in `activeTimers` (cleared by `close()`) so a hung server's
+ * deadline timer can never hold the event loop after provider close.
+ */
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  activeTimers?: Set<NodeJS.Timeout>,
+): Promise<T | null> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<T | null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+    if (activeTimers && timer) activeTimers.add(timer);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) {
+      clearTimeout(timer);
+      activeTimers?.delete(timer);
+    }
+  });
+}
 
 export class McpToolProvider implements ToolProvider {
   private servers: McpServerConfig[];
@@ -22,21 +65,24 @@ export class McpToolProvider implements ToolProvider {
   private executableTools = new Map<string, ReturnType<typeof tool>>();
   private listeners: ((tools: ToolDefinition[]) => void)[] = [];
   private warmUpPromise: Promise<ToolDefinition[]> | null = null;
+  private warmupTimeoutMs: number;
+  private activeTimers = new Set<NodeJS.Timeout>();
 
   constructor(
     servers: Record<string, McpServerConfig> | McpServerConfig[],
     cache = globalAdapterCache,
     factory = new TransportFactory(),
+    warmupTimeoutMs = DEFAULT_WARMUP_TIMEOUT_MS,
   ) {
     const rawList = Array.isArray(servers)
       ? servers
       : Object.entries(servers).map(([name, cfg]) => ({ ...cfg, name: cfg.name ?? name }));
 
     // Filter out servers marked disabled: true (V2) or enabled: false (V1)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    this.servers = rawList.filter((s: any) => s.disabled !== true && s.enabled !== false);
+    this.servers = rawList.filter(isServerEnabled);
     this.cache = cache;
     this.factory = factory;
+    this.warmupTimeoutMs = warmupTimeoutMs;
     this.factory.register('local', new LocalTransportConnector());
     this.factory.register('remote', new RemoteTransportConnector());
   }
@@ -65,57 +111,90 @@ export class McpToolProvider implements ToolProvider {
     this.warmUpPromise = (async () => {
       const serverTasks = this.servers.map(async (serverConfig) => {
         const serverName = serverConfig.name ?? UNNAMED_SERVER;
-        const serverTools: ToolDefinition[] = [];
-        try {
-          const cacheEntry = await this.getConnection(serverConfig, serverName);
-          const mcpToolsResult = await cacheEntry.client.listTools();
+        // Per-server effective deadline: the server's own handshake timeout
+        // wins if set; otherwise the provider-level warm-up deadline bounds it.
+        const deadline = Math.min(
+          serverConfig.timeout ?? Number.MAX_SAFE_INTEGER,
+          this.warmupTimeoutMs,
+        );
 
-          for (const toolDef of mcpToolsResult.tools) {
-            const isDeferred = serverConfig.defer_loading ?? serverConfig.deferred ?? true;
+        // LAYER-2 SETTLED-IS-FINAL GUARD (by construction): the work is raced
+        // against the deadline via withTimeout. ONLY the winner's continuation
+        // may append + notifyListeners — the loser (deadline elapsed, work
+        // still in flight) touches nothing, so late propagation can NEVER land
+        // after the provider has reported settled.
+        const work = (async (): Promise<ToolDefinition[]> => {
+          const serverTools: ToolDefinition[] = [];
+          try {
+            const cacheEntry = await this.getConnection(serverConfig, serverName);
+            const mcpToolsResult = await cacheEntry.client.listTools();
 
-            const { definition, executable } = adaptMcpTool(
-              toolDef,
-              serverName,
-              isDeferred,
-              async () => {
-                const entry = await this.getConnection(serverConfig, serverName);
-                return entry.client;
-              },
-              serverConfig.timeout ?? DEFAULT_TOOL_TIMEOUT_MS,
-            );
+            for (const toolDef of mcpToolsResult.tools) {
+              const isDeferred = serverConfig.defer_loading ?? true;
 
-            serverTools.push(definition);
-            this.executableTools.set(definition.id, executable);
+              const { definition, executable } = adaptMcpTool(
+                toolDef,
+                serverName,
+                isDeferred,
+                async () => {
+                  const entry = await this.getConnection(serverConfig, serverName);
+                  return entry.client;
+                },
+                serverConfig.timeout ?? DEFAULT_TOOL_TIMEOUT_MS,
+              );
+
+              serverTools.push(definition);
+              this.executableTools.set(definition.id, executable);
+            }
+          } catch {
+            // Fail open: skip the failed server and continue warming up the
+            // remaining servers. Warm-up runs at startup, so it must stay quiet —
+            // per-server failures surface via tool availability, not terminal logs.
           }
-        } catch (err) {
-          // Log warning and continue with remaining servers
-          console.warn(`[McpToolProvider] Failed to initialize server ${serverName}:`, err);
+          return serverTools;
+        })();
+
+        const winner = await withTimeout(work, deadline, this.activeTimers);
+        if (winner !== null) {
+          // WORK WON the race: propagate this server's tools NOW. (The
+          // deadline-winner path appends nothing.)
+          if (winner.length > 0) {
+            this.tools.push(...winner);
+            this.notifyListeners();
+          }
+        } else {
+          // CEILING CUT: the server did not settle within its deadline. Cut it
+          // (contributes no tools) and warn loudly so the operator knows why
+          // its tools are unavailable this session.
+          console.warn(
+            `[McpToolProvider] MCP server "${serverName}" did not settle within ${deadline}ms — cutting it; its tools are unavailable this session.`,
+          );
         }
-        return serverTools;
+        return winner ?? [];
       });
 
-      const results = await Promise.allSettled(serverTasks);
-      const allTools: ToolDefinition[] = [];
-      for (const res of results) {
-        if (res.status === 'fulfilled') {
-          allTools.push(...res.value);
-        }
-      }
+      // Bound warmUpPromise's settle: every task settles by construction (the
+      // per-server work is raced against its deadline), so this aggregate
+      // always resolves. Per-server propagation happened in the winner's flow.
+      await Promise.allSettled(serverTasks);
 
-      this.tools = allTools;
-      this.notifyListeners();
-      return this.tools;
+      return [...this.tools];
     })();
     return this.warmUpPromise;
   }
 
-  async awaitReady(timeoutMs = 1500): Promise<void> {
+  async awaitReady(timeoutMs = 1500): Promise<boolean> {
     if (!this.warmUpPromise) {
-      return;
+      // Nothing to warm up — this provider is ready (vacuously).
+      return true;
     }
     let timer: NodeJS.Timeout | undefined;
+    let timedOut = false;
     const timeoutTimer = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, timeoutMs);
+      timer = setTimeout(() => {
+        timedOut = true;
+        resolve();
+      }, timeoutMs);
     });
 
     try {
@@ -126,6 +205,8 @@ export class McpToolProvider implements ToolProvider {
     } finally {
       if (timer) clearTimeout(timer);
     }
+    // true = warm-up won the race (ready); false = the timer won (still warming).
+    return !timedOut;
   }
 
   getTools(): ToolDefinition[] {
@@ -172,6 +253,12 @@ export class McpToolProvider implements ToolProvider {
   }
 
   async close(): Promise<void> {
+    // Timer hygiene: clear any outstanding warm-up deadline timers so hung
+    // servers cannot leave 10s handles holding the event loop after close.
+    for (const timer of this.activeTimers) {
+      clearTimeout(timer);
+    }
+    this.activeTimers.clear();
     await this.cache.clear();
   }
 }

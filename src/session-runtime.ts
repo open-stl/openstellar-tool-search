@@ -11,6 +11,30 @@ export const DEFAULT_DEFER = '[deferred]';
 export const MAX_REGEX_PATTERN_LENGTH = 200;
 export const SEARCH_TIMEOUT_MS = 2000;
 export const MAX_QUERY_LENGTH = 500;
+/**
+ * Second-phase budget granted when the first phase found no hits while the
+ * catalog was still warming up: gives a slow-but-alive MCP server time to
+ * finish its handshake before the search reports the tool as missing.
+ */
+export const EXTENDED_WAIT_MS = 3000;
+
+/**
+ * Returned instead of "No matches ..." when a search found no hits and the
+ * catalog is still warming up: a negative result at this point would be read
+ * by the model as "the tool does not exist", when in truth the MCP servers
+ * simply have not finished their handshake yet.
+ */
+export const WARMING_MESSAGE =
+  'Tool catalog still warming up (MCP servers not ready after ~5s). The tool may exist — retry this search in a few seconds.';
+
+/**
+ * Strips line breaks from the defer label before it is interpolated into
+ * the system prompt (policy block and search-tool descriptions). Prevents
+ * a crafted label from injecting prompt lines.
+ */
+export function sanitizeDeferLabel(label: string): string {
+  return label.replace(/[\r\n]+/g, ' ');
+}
 
 export interface SessionRuntimeOptions {
   alwaysOn: Iterable<string>;
@@ -50,7 +74,7 @@ export class SessionRuntime {
     options: SessionRuntimeOptions,
   ) {
     this.maxResults = options.maxResults;
-    this.deferLabel = options.deferLabel;
+    this.deferLabel = sanitizeDeferLabel(options.deferLabel);
     this.useWorker = options.embedding.useWorker ?? false;
     this.vault = new ToolVault({ embedding: options.embedding });
     this.sessionRegistry = new SessionToolRegistry({
@@ -136,7 +160,14 @@ export class SessionRuntime {
     }
 
     const policyText = deferrals > 0
-      ? `Tools marked "${this.deferLabel}" are deferred. Search for a deferred tool ONCE per session before its first use using tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "<regex>" }). Search results identify the canonical tool ID, which must be used for execution. Once searched, a tool remains authorized for all subsequent calls in the current session until compaction or reset. Do NOT search again for tools already searched in this session — call authorized tools directly. When the exact tool ID is known, prefer tool_search_regex({ pattern: "^<id>$" }).`
+      ? [
+          `[Tool Search Policy] Tools marked "${this.deferLabel}" are deferred: their full description is not in your context.`,
+          '1. Retrieve a deferred tool\'s description ONCE per active context via tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "^<id>$" }).',
+          '2. After retrieval, call the tool by its canonical ID. Re-searching an already-known tool returns no new metadata and wastes tokens.',
+          '3. Re-retrieve only after compaction or reset (e.g. after compress), which clears search state.',
+          '4. Do NOT guess parameter schemas or descriptions — a search is required before use.',
+          'Search results are the authoritative source of the canonical ID and parameter schema.',
+        ].join('\n')
       : '';
 
     return { total, deferrals, policyText, alert };
@@ -156,23 +187,48 @@ export class SessionRuntime {
     const { vault, sessionRegistry, maxResults } = this;
     return {
       tool_search: tool({
-        description: `Find deferred tools marked "${deferLabel}" by task, name, or prefix. Returns full tool IDs and parameter schemas.\nCall tool_search({ query: "<task or name>" }). For regex, use tool_search_regex({ pattern: "<regex>" }).`,
+        description: `Find deferred tools marked "${deferLabel}" by task, name, or prefix. Returns full tool IDs and parameter schemas.\nCall tool_search({ query: "<task or name>" }). For regex, use tool_search_regex({ pattern: "<regex>" }).\nWHEN TO USE: a tool is marked "${deferLabel}", or you need its full description/parameter schema.\nWHEN NOT TO USE: you already searched this tool in the current active context and know its canonical ID — call it directly instead.`,
         args: { query: tool.schema.string().describe('Task, tool name, or prefix.') },
         async execute(args, context) {
           if (args.query.length > MAX_QUERY_LENGTH) {
             return `Query exceeds maximum length of ${MAX_QUERY_LENGTH} characters.`;
           }
           const sessionID = context?.sessionID;
-          await vault.awaitReady(SEARCH_TIMEOUT_MS);
-          const allHits = await vault.query(args.query, vault.count || maxResults, SEARCH_TIMEOUT_MS);
-          if (allHits.length === 0) return `No matches for "${args.query}". Try broader terms or tool_search_regex.`;
+
+          // Phase 1: query FIRST — a hit already in the catalog (e.g. a fast
+          // MCP server's tool landing before a hung server settles) is
+          // delivered immediately without paying the readiness wait. Only a
+          // 0-hit result needs to check readiness (awaitReady is a no-op once
+          // the catalog is settled, so the fast path is unchanged).
+          let allHits = await vault.query(args.query, vault.count || maxResults, SEARCH_TIMEOUT_MS);
+
+          // Phase 2: no hits and the catalog is still warming up — the tool
+          // may exist behind a slow MCP handshake. Wait the extended budget
+          // and re-run the SAME query before declaring a definitive negative.
+          if (allHits.length === 0) {
+            const ready = await vault.awaitReady(SEARCH_TIMEOUT_MS);
+            if (!ready) {
+              await vault.awaitReady(EXTENDED_WAIT_MS);
+            }
+            allHits = await vault.query(args.query, vault.count || maxResults, SEARCH_TIMEOUT_MS);
+          }
+
+          if (allHits.length === 0) {
+            if (!(await vault.awaitReady(0))) {
+              // Still warming after the full budget — never report a negative
+              // the model would read as "tool does not exist".
+              return WARMING_MESSAGE;
+            }
+            // Warm-up settled (or never started): an honest definitive negative.
+            return `No matches for "${args.query}". Try broader terms or tool_search_regex.`;
+          }
 
           const processing = sessionRegistry.processSearchResult(sessionID, allHits, maxResults);
           return processing.responseText;
         },
       }),
       tool_search_regex: tool({
-        description: `Find tools by case-insensitive regex over IDs and descriptions. Returns full tool IDs and parameter schemas.\nCall tool_search_regex({ pattern: "<regex>" }). For task or name search, use tool_search({ query: "<task or name>" }).`,
+        description: `Find tools by case-insensitive regex over IDs and descriptions. Returns full tool IDs and parameter schemas.\nCall tool_search_regex({ pattern: "<regex>" }). For task or name search, use tool_search({ query: "<task or name>" }).\nWHEN TO USE: you know (part of) the exact tool ID, or you need a precise match — e.g. tool_search_regex({ pattern: "^<id>$" }).\nWHEN NOT TO USE: you already searched this tool in the current active context and know its canonical ID — call it directly instead.`,
         args: { pattern: tool.schema.string().describe('Case-insensitive regex for tool IDs and descriptions.') },
         async execute(args, context) {
           if (args.pattern.length > MAX_REGEX_PATTERN_LENGTH) {
@@ -184,9 +240,32 @@ export class SessionRuntime {
             return `Invalid regex pattern "${args.pattern}": ${err instanceof Error ? err.message : String(err)}.`;
           }
           const sessionID = context?.sessionID;
-          await vault.awaitReady(SEARCH_TIMEOUT_MS);
-          const allHits = vault.grep(args.pattern, vault.count || maxResults);
-          if (allHits.length === 0) return `No tools matched pattern "${args.pattern}".`;
+
+          // Phase 1: grep FIRST — a hit already in the catalog (e.g. a fast
+          // MCP server's tool landing before a hung server settles) is
+          // delivered immediately without paying the readiness wait.
+          let allHits = vault.grep(args.pattern, vault.count || maxResults);
+
+          // Phase 2: no hits and the catalog is still warming up — the tool
+          // may exist behind a slow MCP handshake. Wait the extended budget
+          // and re-run the SAME grep before declaring a definitive negative.
+          if (allHits.length === 0) {
+            const ready = await vault.awaitReady(SEARCH_TIMEOUT_MS);
+            if (!ready) {
+              await vault.awaitReady(EXTENDED_WAIT_MS);
+            }
+            allHits = vault.grep(args.pattern, vault.count || maxResults);
+          }
+
+          if (allHits.length === 0) {
+            if (!(await vault.awaitReady(0))) {
+              // Still warming after the full budget — never report a negative
+              // the model would read as "tool does not exist".
+              return WARMING_MESSAGE;
+            }
+            // Warm-up settled (or never started): an honest definitive negative.
+            return `No tools matched pattern "${args.pattern}".`;
+          }
 
           const processing = sessionRegistry.processSearchResult(sessionID, allHits, maxResults);
           return processing.responseText;

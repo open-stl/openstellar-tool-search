@@ -53,6 +53,17 @@ export class ToolStore {
     return false;
   }
 
+  /**
+   * Remove a tool definition (e.g. a placeholder that must disappear once
+   * warm-up settles). Returns `true` if a tool was actually removed; notifies
+   * change listeners so the search index drops the stale entry.
+   */
+  remove(id: string): boolean {
+    const existed = this.store.delete(id);
+    if (existed) this.notifyChanged();
+    return existed;
+  }
+
   prepareIndexedText(entry: ToolMeta): string {
     const fields = [entry.id, entry.description];
     if (entry.parameters) fields.push(...extractParamTexts(entry.parameters));
@@ -130,10 +141,14 @@ export class ToolStore {
 
   /**
    * Await readiness on all registered providers.
+   * Resolves `true` when every provider is ready (vacuously true when no
+   * providers are registered); `false` when any provider is still warming up
+   * after `timeoutMs` (its awaitReady returned false).
    */
-  async awaitReady(timeoutMs?: number): Promise<void> {
-    await Promise.all(
-      this.providers.map((p) => (p.awaitReady ? p.awaitReady(timeoutMs) : Promise.resolve())),
+  async awaitReady(timeoutMs?: number): Promise<boolean> {
+    const results = await Promise.all(
+      this.providers.map((p) => (p.awaitReady ? p.awaitReady(timeoutMs) : Promise.resolve(true))),
     );
+    return results.every((ready) => ready === true);
   }
 }

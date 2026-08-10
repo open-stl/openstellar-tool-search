@@ -32,6 +32,15 @@ export interface ToolSearchConfig {
 
   /** MCP server configurations matching OpenCode's native format. */
   mcp?: Record<string, McpServerConfig>;
+
+  /**
+   * Per-server warm-up CEILING (ms): each MCP server must settle within it or
+   * is cut (fail-open, tools unavailable; a console.warn names it). The
+   * factory waits for ALL enabled servers to settle/cut before returning, so
+   * MCP tools are registered BEFORE opencode snapshots the session tool-set
+   * (~0-2s). Default: 60s (DEFAULT_WARMUP_TIMEOUT_MS).
+   */
+  preWarmMs?: number;
 }
 
 export interface EmbedConfig {

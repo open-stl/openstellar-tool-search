@@ -61,6 +61,11 @@ export class SessionToolRegistry {
     return this.authorization.registerTool(toolID);
   }
 
+  /** Mark a tool as always-on (never deferred, never requires search first). */
+  public addAlwaysOn(toolID: string): void {
+    this.authorization.addAlwaysOn(toolID);
+  }
+
   public registerProviderTools(tools: import('./tool-provider.js').ToolDefinition[]): void {
     for (const tool of tools) {
       if (tool.deferred !== false) {

@@ -346,6 +346,7 @@ describe('E2E: system.transform hook', () => {
       expect(out.system[0]).toMatch(/Tools marked ".*" are deferred/);
       expect(out.system[0]).toMatch(/tool_search\(\{ query: /);
       expect(out.system[0]).toMatch(/tool_search_regex\(\{ pattern: /);
+      expect(out.system[0]).toMatch(/Do NOT guess parameter schemas/);
   });
 });
 
@@ -357,7 +358,7 @@ describe('E2E: skill authorization policy', () => {
     const out: any = { system: [] };
     await hooks['experimental.chat.system.transform']!({} as any, out);
     const policy = out.system.join('\\n');
-    expect(policy).toContain('Search for a deferred tool ONCE per session');
+    expect(policy).toContain('ONCE per active context');
     expect(policy).not.toContain('Exception:');
     expect(policy).not.toContain('One exact successful lookup permits one skill invocation');
   });

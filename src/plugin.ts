@@ -3,13 +3,14 @@ import type { ToolSearchConfig, EmbedConfig } from './types.js';
 import { SessionRuntime, SEARCH_IDS, DEFAULT_DEFER } from './session-runtime.js';
 import { UpdateCheckLifecycle } from './hooks/update-check.js';
 import { McpWiring, parseMcpConfig } from './hooks/mcp-wiring.js';
+import { DEFAULT_WARMUP_TIMEOUT_MS } from './mcp/mcp-tool-provider.js';
 import { toast } from './hooks/toast.js';
 
-const ALLOWED_CONFIG_KEYS = new Set(['alwaysLoad', 'maxResults', 'mode', 'resetTools', 'mcp']);
+const ALLOWED_CONFIG_KEYS = new Set(['alwaysLoad', 'maxResults', 'mode', 'resetTools', 'mcp', 'preWarmMs']);
 
 function validateConfig(rawOpts: Record<string, unknown>): void {
   for (const key of Object.keys(rawOpts)) {
-    if (!ALLOWED_CONFIG_KEYS.has(key)) {
+    if (!ALLOWED_CONFIG_KEYS.has(key) && process.env.TOOL_SEARCH_DEBUG) {
       console.warn(
         `[ToolSearchPlugin] Unknown or deprecated configuration key "${key}". Allowed keys: ${Array.from(ALLOWED_CONFIG_KEYS).join(', ')}.`,
       );
@@ -52,12 +53,26 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     embedding: buildEmbedding(isKeywordMode),
   });
 
-  const mcp = new McpWiring(runtime.vault, runtime.sessionRegistry, runtime.searchTools, deferLabel);
+  const mcp = new McpWiring(
+    runtime.vault,
+    runtime.sessionRegistry,
+    runtime.searchTools,
+    deferLabel,
+    opts.preWarmMs ?? DEFAULT_WARMUP_TIMEOUT_MS,
+  );
   const updateCheck = new UpdateCheckLifecycle(ctx);
 
   const pluginMcpConfig = parseMcpConfig(opts.mcp);
   if (pluginMcpConfig) {
-    await mcp.init(pluginMcpConfig);
+    // WAIT-ALL PRE-WARM: opencode freezes the session tool-set at start
+    // (~0-2s); MCP tools registered after that snapshot are permanently
+    // uncallable. So the factory blocks until EVERY enabled server settles or
+    // is CUT at its per-server ceiling (preWarmMs, default 60s — a cut emits
+    // console.warn). Anything that settles is first-class in the session;
+    // anything cut is honestly absent (status-only placeholder retained).
+    // Non-MCP loads: no call, no delay.
+    mcp.init(pluginMcpConfig);
+    await mcp.preWarm();
   }
 
   setTimeout(() => toast(ctx, 'Tool Search', 'Active — tools will be deferred on first prompt.', 'info', 4000), 3000);
@@ -66,7 +81,8 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     config: async (cfg) => {
       const topLevelMcp = parseMcpConfig((cfg as { mcp?: unknown } | undefined)?.mcp);
       if (topLevelMcp && !mcp.isInitialized) {
-        await mcp.init(topLevelMcp);
+        mcp.init(topLevelMcp);
+        await mcp.preWarm();
       }
     },
     tool: runtime.searchTools,

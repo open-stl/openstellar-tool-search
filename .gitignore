@@ -13,3 +13,14 @@ HOMEWORK-RESULT.md
 CLAUDE.md
 .slim/deepwork/
 skills-lock.json
+
+# Force-include Architecture Decision Records — the user's GLOBAL gitignore
+# ignores *.md, but ADRs are durable decision records that MUST ship with the
+# repo. The negation below overrides the global rule for docs/adr/.
+!docs/adr/
+!docs/adr/*.md
+
+# BEGIN oh-my-opencode-slim worktrees
+.slim/worktrees/
+.slim/worktrees.json
+# END oh-my-opencode-slim worktrees

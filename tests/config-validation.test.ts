@@ -5,6 +5,8 @@ import type { PluginInput } from '@opencode-ai/plugin';
 describe('Simplified ToolSearchConfig Surface & Validation', () => {
   it('emits console.warn when unknown or deprecated configuration options are passed', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const previousDebug = process.env.TOOL_SEARCH_DEBUG;
+    process.env.TOOL_SEARCH_DEBUG = '1';
     const mockCtx = {} as PluginInput;
 
     await ToolSearchPlugin.server(mockCtx, {
@@ -21,6 +23,8 @@ describe('Simplified ToolSearchConfig Surface & Validation', () => {
       expect.stringContaining('[ToolSearchPlugin] Unknown or deprecated configuration key "invalidKnob"')
     );
 
+    if (previousDebug === undefined) delete process.env.TOOL_SEARCH_DEBUG;
+    else process.env.TOOL_SEARCH_DEBUG = previousDebug;
     warnSpy.mockRestore();
   });
 

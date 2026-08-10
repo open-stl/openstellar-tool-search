@@ -292,7 +292,7 @@ describe('ToolSearchPlugin', () => {
     const output = { system: [] as string[] };
     await hooks['experimental.chat.system.transform']!({ sessionID: 'policy-session' } as any, output as any);
     const text = output.system.join('\n');
-    expect(text).toContain('canonical tool ID');
+    expect(text).toContain('canonical ID');
     expect(text).not.toContain('alias');
     // When the tool ID is already known, AI should use tool_search_regex for a reliable exact match.
     expect(text).toContain('tool_search_regex');
@@ -646,7 +646,7 @@ describe('ToolSearchPlugin', () => {
   });
 
   // =========================================================================
-  // Delivery History + No-Op Discovery tests (CONTEXT.md rules 32-43)
+  // Delivery history and no-op discovery tests
   // =========================================================================
 
   it('returns No-Op Discovery response when all results are delivered and authorized (rule 36)', async () => {
@@ -790,7 +790,7 @@ describe('ToolSearchPlugin', () => {
     const sessionID = 'f5-limit-session';
     const searchTool = (hooks.tool as any).tool_search_regex;
 
-    // First search: delivers tool1-tool3 (limited by searchLimit=3)
+    // First search: delivers tool1-tool3 (limited by maxResults=3)
     const firstResult = await searchTool.execute({ pattern: '^tool[123]$' }, { sessionID });
     expect(firstResult).toContain('Found 3 tool(s)');
 

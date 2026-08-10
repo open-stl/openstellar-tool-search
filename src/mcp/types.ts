@@ -4,7 +4,6 @@ export interface BaseServerConfig {
   name?: string;
   type: string;
   timeout?: number;
-  deferred?: boolean;
   defer_loading?: boolean;
 }
 

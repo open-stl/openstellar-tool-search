@@ -26,7 +26,7 @@ interface PersistedDeliveryHistory {
 }
 
 // ---------------------------------------------------------------------------
-// Fingerprint (CONTEXT.md rule 35)
+// Fingerprint for stable tool-definition identity
 // ---------------------------------------------------------------------------
 
 /** Recursively sort object keys for stable serialization. */
@@ -44,7 +44,7 @@ export function computeFingerprint(toolMeta: ToolMeta): string {
 }
 
 // ---------------------------------------------------------------------------
-// Delivery History Persistence (CONTEXT.md rule 43)
+// Delivery history persistence
 // ---------------------------------------------------------------------------
 
 export function getDefaultDeliveryHistoryPath(): string {
@@ -242,7 +242,7 @@ export class DeliveryHistoryPersistence {
 }
 
 // ---------------------------------------------------------------------------
-// Delivery History (CONTEXT.md rules 32-43)
+// Delivery history state and authorization-aware delivery tracking
 // ---------------------------------------------------------------------------
 
 export class DeliveryHistory {
