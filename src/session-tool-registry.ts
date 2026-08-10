@@ -3,7 +3,7 @@ import { AuthorizationState } from './authorization-state.js';
 import { DeliveryHistory, computeFingerprint } from './delivery-history.js';
 import { AuthPersistence } from './auth-persistence.js';
 
-export interface SessionToolRegistryOptions {
+interface SessionToolRegistryOptions {
   alwaysOn: Iterable<string>;
   resetTools: Iterable<string>;
   filePath?: string;
@@ -12,9 +12,9 @@ export interface SessionToolRegistryOptions {
   persistence?: AuthPersistence;
 }
 
-export type SearchResultKind = 'no-op' | 're-auth' | 'new';
+type SearchResultKind = 'no-op' | 're-auth' | 'new';
 
-export interface SearchResultProcessing {
+interface SearchResultProcessing {
   kind: SearchResultKind;
   hits: ToolMeta[];
   responseText: string;

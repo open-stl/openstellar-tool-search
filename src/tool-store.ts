@@ -1,5 +1,5 @@
 import type { ToolMeta } from './types.js';
-import type { ToolProvider, ToolDefinition } from './tool-provider.js';
+import type { ToolProvider } from './tool-provider.js';
 
 function extractParamTexts(schema: unknown, prefix = ''): string[] {
   if (!schema || typeof schema !== 'object') return [];

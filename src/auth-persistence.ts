@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import process, { env } from 'node:process';
 import { writeJsonAtomic } from './utils/atomic-write.js';
 
-export interface CanonicalToolAuthorization {
+interface CanonicalToolAuthorization {
   kind: 'canonical-tool';
   version: 1;
   canonicalId: string;
@@ -12,14 +12,14 @@ export interface CanonicalToolAuthorization {
 
 export type PersistedToolAuthorization = string | CanonicalToolAuthorization;
 
-export interface PersistedSession {
+interface PersistedSession {
   tools: PersistedToolAuthorization[];
   lastSeen?: number;
 }
 
-export type PersistedAuthMap = Record<string, PersistedSession>;
+type PersistedAuthMap = Record<string, PersistedSession>;
 
-export interface AuthPersistenceOptions {
+interface AuthPersistenceOptions {
   filePath?: string;
   debounceMs?: number;
 }
@@ -32,7 +32,7 @@ export function getDefaultAuthStoragePath(): string {
   return join(baseDir, 'opencode', 'tool-search', 'authorizations.json');
 }
 
-export function looksLikeSessionEntry(entry: unknown): entry is PersistedSession {
+function looksLikeSessionEntry(entry: unknown): entry is PersistedSession {
   return (
     typeof entry === 'object' &&
     entry !== null &&

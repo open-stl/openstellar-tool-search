@@ -1,6 +1,6 @@
 import type { PluginInput } from '@opencode-ai/plugin';
 
-export type ToastVariant = 'info' | 'success' | 'warning' | 'error';
+type ToastVariant = 'info' | 'success' | 'warning' | 'error';
 
 /**
  * Display a toast in the OpenCode TUI. The toast is deferred by 100ms so the

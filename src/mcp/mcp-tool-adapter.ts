@@ -1,7 +1,6 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { tool } from '@opencode-ai/plugin';
 import type { ToolDefinition } from '../tool-provider.js';
-import type { McpToolDefinition } from './convert-mcp-tool.js';
 import { convertMcpTool } from './convert-mcp-tool.js';
 
 /**
@@ -19,12 +18,12 @@ export function sanitizeToolId(serverName: string, toolName: string): string {
   return `${serverName}_${toolName}`;
 }
 
-export interface AdaptedMcpTool {
+interface AdaptedMcpTool {
   definition: ToolDefinition;
   executable: ReturnType<typeof tool>;
 }
 
-export interface McpToolSource {
+interface McpToolSource {
   name: string;
   description?: string;
   inputSchema?: unknown;

@@ -10,7 +10,7 @@ export interface ServerCacheEntry {
   client: Client;
 }
 
-export type ServerConnectionFactory = () => Promise<ServerCacheEntry>;
+type ServerConnectionFactory = () => Promise<ServerCacheEntry>;
 
 function stableStringify(obj: unknown): string {
   if (obj === null || obj === undefined) return String(obj);

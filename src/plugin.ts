@@ -1,4 +1,4 @@
-import type { Hooks, Plugin, PluginInput, PluginOptions } from '@opencode-ai/plugin';
+import type { Hooks, Plugin, PluginOptions } from '@opencode-ai/plugin';
 import type { ToolSearchConfig, EmbedConfig } from './types.js';
 import { SessionRuntime, SEARCH_IDS, DEFAULT_DEFER } from './session-runtime.js';
 import { UpdateCheckLifecycle } from './hooks/update-check.js';

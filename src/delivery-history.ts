@@ -10,7 +10,7 @@ import { writeJsonAtomic } from './utils/atomic-write.js';
 // Types
 // ---------------------------------------------------------------------------
 
-export interface DiscoveryResult {
+interface DiscoveryResult {
   id: string;
   description: string;
   parameters: unknown;
@@ -47,7 +47,7 @@ export function computeFingerprint(toolMeta: ToolMeta): string {
 // Delivery history persistence
 // ---------------------------------------------------------------------------
 
-export function getDefaultDeliveryHistoryPath(): string {
+function getDefaultDeliveryHistoryPath(): string {
   if (platform() === 'win32' && env.APPDATA) {
     return join(env.APPDATA, 'opencode', 'tool-search', 'delivery-history.json');
   }
@@ -55,7 +55,7 @@ export function getDefaultDeliveryHistoryPath(): string {
   return join(baseDir, 'opencode', 'tool-search', 'delivery-history.json');
 }
 
-export interface DeliveryHistoryPersistenceOptions {
+interface DeliveryHistoryPersistenceOptions {
   filePath?: string;
   debounceMs?: number;
 }

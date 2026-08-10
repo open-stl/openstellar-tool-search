@@ -29,5 +29,3 @@ export class TransportFactory {
     return Array.from(this.connectors.keys());
   }
 }
-
-export const defaultTransportFactory = new TransportFactory();

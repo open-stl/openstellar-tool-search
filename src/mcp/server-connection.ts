@@ -8,7 +8,7 @@ import type { Transport } from './transport-factory.js';
 export const MCP_CLIENT_NAME = 'openstellar-tool-search';
 export const MCP_CLIENT_VERSION = '1.0.0';
 
-export interface McpConnection {
+interface McpConnection {
   client: Client;
   transport: Transport;
 }

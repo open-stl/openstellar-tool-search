@@ -1,5 +1,3 @@
-import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-
 export interface BaseServerConfig {
   name?: string;
   type: string;
@@ -21,8 +19,3 @@ export interface RemoteMcpServerConfig extends BaseServerConfig {
 }
 
 export type McpServerConfig = LocalMcpServerConfig | RemoteMcpServerConfig;
-
-export interface ServerConnection {
-  client: Client;
-  server: McpServerConfig;
-}

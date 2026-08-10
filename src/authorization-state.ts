@@ -48,7 +48,7 @@ function migrateAuthorization(value: PersistedToolAuthorization): PersistedToolA
   return { kind: 'canonical-tool', version: 1, canonicalId };
 }
 
-export interface AuthorizationStateOptions {
+interface AuthorizationStateOptions {
   alwaysOn: Iterable<string>;
   resetTools: Iterable<string>;
   persistence?: AuthPersistence;

@@ -1,16 +1,16 @@
 import type { PluginInput } from '@opencode-ai/plugin';
 import { tool } from '@opencode-ai/plugin';
 import { ToolVault } from './vault.js';
-import type { ToolMeta, EmbedConfig } from './types.js';
+import type { EmbedConfig } from './types.js';
 import { SessionToolRegistry } from './session-tool-registry.js';
 import { toast } from './hooks/toast.js';
 import { truncateDescription } from './hooks/deferral.js';
 
 export const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
 export const DEFAULT_DEFER = '[deferred]';
-export const MAX_REGEX_PATTERN_LENGTH = 200;
+const MAX_REGEX_PATTERN_LENGTH = 200;
 export const SEARCH_TIMEOUT_MS = 2000;
-export const MAX_QUERY_LENGTH = 500;
+const MAX_QUERY_LENGTH = 500;
 /**
  * Second-phase budget granted when the first phase found no hits while the
  * catalog was still warming up: gives a slow-but-alive MCP server time to
@@ -32,11 +32,11 @@ export const WARMING_MESSAGE =
  * the system prompt (policy block and search-tool descriptions). Prevents
  * a crafted label from injecting prompt lines.
  */
-export function sanitizeDeferLabel(label: string): string {
+function sanitizeDeferLabel(label: string): string {
   return label.replace(/[\r\n]+/g, ' ');
 }
 
-export interface SessionRuntimeOptions {
+interface SessionRuntimeOptions {
   alwaysOn: Iterable<string>;
   resetTools: Iterable<string>;
   maxResults: number;
@@ -44,7 +44,7 @@ export interface SessionRuntimeOptions {
   embedding: EmbedConfig;
 }
 
-export interface SystemPromptState {
+interface SystemPromptState {
   total: number;
   deferrals: number;
   policyText: string;

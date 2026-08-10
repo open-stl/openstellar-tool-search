@@ -3,7 +3,7 @@ import { RankEngine } from './rank.js';
 import { SemanticMatcher } from './matcher.js';
 import type { ToolStore } from './tool-store.js';
 
-export interface SearchEngineOptions extends Partial<ScoreParams> {
+interface SearchEngineOptions extends Partial<ScoreParams> {
   embedding?: EmbedConfig;
 }
 

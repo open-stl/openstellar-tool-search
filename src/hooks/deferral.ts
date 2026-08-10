@@ -9,7 +9,7 @@
 
 const ABBREVIATIONS = new Set(['eg', 'ie', 'dr', 'mr', 'ms', 'mrs', 'vs', 'etc']);
 
-export function getFirstSentence(desc: string): string {
+function getFirstSentence(desc: string): string {
   if (!desc) return '';
   const firstNewline = desc.indexOf('\n');
   const firstLine = firstNewline !== -1 ? desc.slice(0, firstNewline).trim() : desc.trim();

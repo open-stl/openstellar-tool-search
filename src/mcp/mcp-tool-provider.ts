@@ -7,7 +7,7 @@ import { TransportFactory } from './transport-factory.js';
 import { LocalTransportConnector } from './transports/local-transport.js';
 import { RemoteTransportConnector } from './transports/remote-transport.js';
 import { createMcpConnection } from './server-connection.js';
-import { adaptMcpTool, sanitizeToolId } from './mcp-tool-adapter.js';
+import { adaptMcpTool } from './mcp-tool-adapter.js';
 
 export { sanitizeToolId } from './mcp-tool-adapter.js';
 

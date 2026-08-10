@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { readFileSync, existsSync, rmSync, promises as fsPromises } from 'node:fs';
+import { readFileSync, existsSync, rmSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { env } from 'node:process';
 import { gt, valid } from 'semver';
@@ -9,16 +9,16 @@ import { resolveRegistryUrl, buildDistTagsUrl } from './npm-registry.js';
 const PACKAGE_NAME = '@openstellar/tool-search';
 const NPM_FETCH_TIMEOUT = 5000;
 
-export type UpdateCheckOutcome = 'up-to-date' | 'update-staged' | 'invalidation-failed' | 'check-failed';
+type UpdateCheckOutcome = 'up-to-date' | 'update-staged' | 'invalidation-failed' | 'check-failed';
 
-export interface UpdateCheckResult {
+interface UpdateCheckResult {
     outcome: UpdateCheckOutcome;
     currentVersion: string | null;
     latestVersion: string | null;
     error?: string;
 }
 
-export function getCurrentVersion(): string | null {
+function getCurrentVersion(): string | null {
     try {
         const __filename = fileURLToPath(import.meta.url);
         const dir = dirname(__filename);
@@ -37,7 +37,7 @@ export function getCurrentVersion(): string | null {
     return null;
 }
 
-export interface LatestVersionEffects {
+interface LatestVersionEffects {
     resolveRegistryUrl: typeof resolveRegistryUrl;
     fetch: typeof fetch;
 }
@@ -87,7 +87,7 @@ export function getPackageCacheTargets(cacheRoot: string): string[] {
     return [join(cacheRoot, PACKAGE_NAME), join(cacheRoot, `${PACKAGE_NAME}@latest`)];
 }
 
-export interface CacheInvalidationEffects {
+interface CacheInvalidationEffects {
     existsSync: typeof existsSync;
     rmSync: typeof rmSync;
 }
@@ -127,7 +127,7 @@ export function isNewerVersion(latest: string, current: string): boolean {
     return valid(latest) !== null && valid(current) !== null && gt(latest, current);
 }
 
-export interface UpdateCheckEffects {
+interface UpdateCheckEffects {
     getCurrentVersion: () => string | null;
     getLatestVersion: () => Promise<string | null>;
     invalidatePackageCache: () => boolean;
