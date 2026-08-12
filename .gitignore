@@ -19,6 +19,8 @@ skills-lock.json
 # repo. The negation below overrides the global rule for docs/adr/.
 !docs/adr/
 !docs/adr/*.md
+!docs/agents/
+!docs/agents/*.md
 
 # BEGIN oh-my-opencode-slim worktrees
 .slim/worktrees/
