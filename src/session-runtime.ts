@@ -207,6 +207,12 @@ export class SessionRuntime {
           const partObj = part as Record<string, unknown>;
           if (typeof partObj.text === 'string') text += partObj.text + ' ';
           if (typeof partObj.content === 'string') text += partObj.content + ' ';
+          if (typeof partObj.output === 'string') text += partObj.output + ' ';
+          const state = partObj.state as Record<string, unknown> | undefined;
+          if (state && typeof state === 'object') {
+            if (typeof state.output === 'string') text += state.output + ' ';
+            if (typeof state.text === 'string') text += state.text + ' ';
+          }
         }
       }
     }
@@ -216,10 +222,13 @@ export class SessionRuntime {
         if (block && typeof block === 'object') {
           const blockObj = block as Record<string, unknown>;
           if (typeof blockObj.text === 'string') text += blockObj.text + ' ';
+          if (typeof blockObj.output === 'string') text += blockObj.output + ' ';
           if (Array.isArray(blockObj.content)) {
             for (const c of blockObj.content) {
-              if (c && typeof c === 'object' && typeof (c as Record<string, unknown>).text === 'string') {
-                text += (c as Record<string, unknown>).text + ' ';
+              if (c && typeof c === 'object') {
+                const cObj = c as Record<string, unknown>;
+                if (typeof cObj.text === 'string') text += cObj.text + ' ';
+                if (typeof cObj.output === 'string') text += cObj.output + ' ';
               }
             }
           }
