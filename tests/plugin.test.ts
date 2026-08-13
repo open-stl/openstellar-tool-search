@@ -220,8 +220,8 @@ describe('ToolSearchPlugin', () => {
 
   it('migrates legacy ambiguous _ide authorization to canonical object form after restart', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'tool-search-legacy-'));
-    const previousCache = process.env.XDG_CONFIG_HOME;
-    process.env.XDG_CONFIG_HOME = directory;
+    const previousCache = process.env.XDG_CACHE_HOME;
+    process.env.XDG_CACHE_HOME = directory;
     try {
       const filePath = join(directory, 'openstellar', 'tool-search', 'authorizations.json');
       const writeLegacy = (tool: string) => {
@@ -243,8 +243,8 @@ describe('ToolSearchPlugin', () => {
         expect(output.output).toBe('Legacy result');
       }
     } finally {
-      if (previousCache === undefined) delete process.env.XDG_CONFIG_HOME;
-      else process.env.XDG_CONFIG_HOME = previousCache;
+      if (previousCache === undefined) delete process.env.XDG_CACHE_HOME;
+      else process.env.XDG_CACHE_HOME = previousCache;
       rmSync(directory, { recursive: true, force: true });
     }
   });

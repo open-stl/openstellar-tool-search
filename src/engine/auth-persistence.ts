@@ -25,11 +25,11 @@ interface AuthPersistenceOptions {
 }
 
 export function getDefaultAuthStoragePath(): string {
-  if (platform() === 'win32' && env.APPDATA) {
-    return join(env.APPDATA, 'openstellar', 'tool-search', 'authorizations.json');
+  if (platform() === 'win32' && env.LOCALAPPDATA) {
+    return join(env.LOCALAPPDATA, 'openstellar', 'tool-search', 'authorizations.json');
   }
-  const configHome = env.XDG_CONFIG_HOME || (env.VITEST ? join(tmpdir(), 'tool-search-test-' + process.pid + '-' + Math.random().toString(36).slice(2)) : join(homedir(), '.config'));
-  return join(configHome, 'openstellar', 'tool-search', 'authorizations.json');
+  const baseDir = env.XDG_CACHE_HOME || (env.VITEST ? join(tmpdir(), 'tool-search-test-' + process.pid + '-' + Math.random().toString(36).slice(2)) : join(homedir(), '.cache'));
+  return join(baseDir, 'openstellar', 'tool-search', 'authorizations.json');
 }
 
 function looksLikeSessionEntry(entry: unknown): entry is PersistedSession {

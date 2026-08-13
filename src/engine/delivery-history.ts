@@ -48,11 +48,11 @@ export function computeFingerprint(toolMeta: ToolMeta): string {
 // ---------------------------------------------------------------------------
 
 function getDefaultDeliveryHistoryPath(): string {
-  if (platform() === 'win32' && env.APPDATA) {
-    return join(env.APPDATA, 'openstellar', 'tool-search', 'session-deliveries.json');
+  if (platform() === 'win32' && env.LOCALAPPDATA) {
+    return join(env.LOCALAPPDATA, 'openstellar', 'tool-search', 'session-deliveries.json');
   }
-  const configHome = env.XDG_CONFIG_HOME || (env.VITEST ? join(tmpdir(), 'tool-search-test-' + process.pid + '-' + Math.random().toString(36).slice(2)) : join(homedir(), '.config'));
-  return join(configHome, 'openstellar', 'tool-search', 'session-deliveries.json');
+  const baseDir = env.XDG_CACHE_HOME || (env.VITEST ? join(tmpdir(), 'tool-search-test-' + process.pid + '-' + Math.random().toString(36).slice(2)) : join(homedir(), '.cache'));
+  return join(baseDir, 'openstellar', 'tool-search', 'session-deliveries.json');
 }
 
 interface DeliveryHistoryPersistenceOptions {
