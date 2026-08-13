@@ -126,6 +126,7 @@ export class McpToolProvider implements ToolProvider {
         const work = (async (): Promise<ToolDefinition[]> => {
           const serverTools: ToolDefinition[] = [];
           try {
+            console.log(`\x1b[36m[Tool Search]\x1b[0m Starting MCP server connection: "${serverName}"...`);
             const cacheEntry = await this.getConnection(serverConfig, serverName);
             const mcpToolsResult = await cacheEntry.client.listTools();
 
@@ -146,10 +147,9 @@ export class McpToolProvider implements ToolProvider {
               serverTools.push(definition);
               this.executableTools.set(definition.id, executable);
             }
-          } catch {
-            // Fail open: skip the failed server and continue warming up the
-            // remaining servers. Warm-up runs at startup, so it must stay quiet —
-            // per-server failures surface via tool availability, not terminal logs.
+            console.log(`\x1b[36m[Tool Search]\x1b[0m Connected MCP server "${serverName}" — loaded ${serverTools.length} tool(s).`);
+          } catch (err) {
+            console.warn(`\x1b[33m[Tool Search]\x1b[0m Failed connecting MCP server "${serverName}": ${err instanceof Error ? err.message : String(err)}`);
           }
           return serverTools;
         })();
