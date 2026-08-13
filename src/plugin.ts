@@ -78,9 +78,8 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     const total = runtime.vault.count;
     const deferrals = runtime.sessionRegistry.deferredCount;
     const msg = deferrals > 0
-      ? `[Tool Search] Active — ${deferrals}/${total} tools deferred for search optimization.`
-      : '[Tool Search] Active — tools will be deferred on first prompt.';
-    console.log(`\n\x1b[36m[Tool Search]\x1b[0m ${msg}`);
+      ? `Active — ${deferrals}/${total} tools deferred for search optimization.`
+      : 'Active — tools will be deferred on first prompt.';
     toast(ctx, 'Tool Search', msg, 'info', 4000);
   }, 3000);
 
