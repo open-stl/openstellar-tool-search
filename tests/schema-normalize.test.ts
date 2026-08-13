@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Schema } from 'effect';
-import { normalizeParameters } from '../src/schema-normalize.js';
-import { computeFingerprint } from '../src/delivery-history.js';
+import { normalizeParameters } from '../src/catalog/schema-normalize.js';
+import { computeFingerprint } from '../src/engine/delivery-history.js';
 import type { ToolMeta } from '../src/types.js';
 
 /**

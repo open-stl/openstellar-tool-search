@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { ToolVault } from '../src/vault.js';
-import { SemanticMatcher } from '../src/matcher.js';
-import { RankEngine } from '../src/rank.js';
+import { ToolVault } from '../src/catalog/vault.js';
+import { SemanticMatcher } from '../src/catalog/matcher.js';
+import { RankEngine } from '../src/catalog/rank.js';
 
 describe('ToolVault', () => {
   const deferred = <T = void>() => {

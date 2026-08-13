@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ToolStore } from '../src/tool-store.js';
-import type { ToolProvider, ToolDefinition } from '../src/tool-provider.js';
+import { ToolStore } from '../src/catalog/tool-store.js';
+import type { ToolProvider, ToolDefinition } from '../src/catalog/tool-provider.js';
 
 describe('ToolProvider Abstraction Seam', () => {
   it('registers tools from a ToolProvider into ToolStore', async () => {

@@ -2,8 +2,8 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import { SemanticMatcher } from '../src/matcher.js';
-import type { IndexedEntry } from '../src/matcher.js';
+import { SemanticMatcher } from '../src/catalog/matcher.js';
+import type { IndexedEntry } from '../src/catalog/matcher.js';
 
 describe('SemanticMatcher', () => {
   it('requires enabled in config', () => {

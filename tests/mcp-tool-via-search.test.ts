@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import type { Hooks, Plugin, PluginInput } from '@opencode-ai/plugin';
 import { ToolSearchPlugin } from '../src/plugin.js';
-import { ToolVault } from '../src/vault.js';
+import { ToolVault } from '../src/catalog/vault.js';
 
 const MCP_TOOLS = [
   {

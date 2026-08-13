@@ -3,16 +3,16 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ToolSearchPlugin } from '../src/plugin.js';
-import { ToolVault } from '../src/vault.js';
-import { AuthPersistence } from '../src/auth-persistence.js';
-import type { PersistedToolAuthorization } from '../src/auth-persistence.js';
+import { ToolVault } from '../src/catalog/vault.js';
+import { AuthPersistence } from '../src/engine/auth-persistence.js';
+import type { PersistedToolAuthorization } from '../src/engine/auth-persistence.js';
 
 // Track SemanticMatcher instantiation for Bug 6 test.
 let matcherInstantiated = false;
 
 // Mock the embedding module so we can detect when SemanticMatcher is created
 // (and avoid loading real transformer models during tests).
-vi.mock('../src/matcher.js', () => ({
+vi.mock('../src/catalog/matcher.js', () => ({
   SemanticMatcher: class {
     constructor() {
       matcherInstantiated = true;
@@ -170,8 +170,8 @@ describe('ToolSearchPlugin', () => {
 
   it('persists structured _ide authorization through a real serialized restart', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'tool-search-auth-'));
-    const previousCache = process.env.XDG_CACHE_HOME;
-    process.env.XDG_CACHE_HOME = directory;
+    const previousCache = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = directory;
     try {
       const first = await ToolSearchPlugin({} as any, { mode: 'keyword' });
       await first['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
@@ -189,19 +189,19 @@ describe('ToolSearchPlugin', () => {
       await second['tool.execute.after']!({ tool: 'foo_ide', sessionID: 'disk-session', callID: 'disk' } as any, output as any);
       expect(output.output).toBe('Real result');
     } finally {
-      if (previousCache === undefined) delete process.env.XDG_CACHE_HOME;
-      else process.env.XDG_CACHE_HOME = previousCache;
+      if (previousCache === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previousCache;
       rmSync(directory, { recursive: true, force: true });
     }
   });
 
   it('fails closed for a legacy literal JSON structured-looking authorization after restart', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'tool-search-legacy-json-'));
-    const previousCache = process.env.XDG_CACHE_HOME;
-    process.env.XDG_CACHE_HOME = directory;
+    const previousCache = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = directory;
     try {
-      const filePath = join(directory, 'opencode', 'tool-search', 'authorizations.json');
-      mkdirSync(join(directory, 'opencode', 'tool-search'), { recursive: true });
+      const filePath = join(directory, 'openstellar', 'tool-search', 'authorizations.json');
+      mkdirSync(join(directory, 'openstellar', 'tool-search'), { recursive: true });
       writeFileSync(filePath, JSON.stringify({ 'legacy-json-session': {
         tools: ['{"kind":"canonical-tool","version":1,"canonicalId":"foo_ide"}'],
       } }), 'utf8');
@@ -212,20 +212,20 @@ describe('ToolSearchPlugin', () => {
         hooks['tool.execute.before']!({ tool: 'foo_ide', sessionID: 'legacy-json-session' } as any, {} as any)
       ).rejects.toThrow('[Tool Search Required]');
     } finally {
-      if (previousCache === undefined) delete process.env.XDG_CACHE_HOME;
-      else process.env.XDG_CACHE_HOME = previousCache;
+      if (previousCache === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previousCache;
       rmSync(directory, { recursive: true, force: true });
     }
   });
 
   it('migrates legacy ambiguous _ide authorization to canonical object form after restart', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'tool-search-legacy-'));
-    const previousCache = process.env.XDG_CACHE_HOME;
-    process.env.XDG_CACHE_HOME = directory;
+    const previousCache = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = directory;
     try {
-      const filePath = join(directory, 'opencode', 'tool-search', 'authorizations.json');
+      const filePath = join(directory, 'openstellar', 'tool-search', 'authorizations.json');
       const writeLegacy = (tool: string) => {
-                mkdirSync(join(directory, 'opencode', 'tool-search'), { recursive: true });
+        mkdirSync(join(directory, 'openstellar', 'tool-search'), { recursive: true });
         writeFileSync(filePath, JSON.stringify({ 'legacy-session': { tools: [tool] } }), 'utf8');
       };
       for (const legacyTool of ['foo_ide', '@canonical:foo_ide']) {
@@ -243,8 +243,8 @@ describe('ToolSearchPlugin', () => {
         expect(output.output).toBe('Legacy result');
       }
     } finally {
-      if (previousCache === undefined) delete process.env.XDG_CACHE_HOME;
-      else process.env.XDG_CACHE_HOME = previousCache;
+      if (previousCache === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previousCache;
       rmSync(directory, { recursive: true, force: true });
     }
   });

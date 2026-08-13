@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { McpToolProvider } from '../src/mcp/mcp-tool-provider.js';
-import { ToolVault } from '../src/vault.js';
-import { ToolStore } from '../src/tool-store.js';
+import { ToolVault } from '../src/catalog/vault.js';
+import { ToolStore } from '../src/catalog/tool-store.js';
 import { ToolSearchPlugin } from '../src/plugin.js';
 import type { TransportFactory, Transport } from '../src/mcp/transport-factory.js';
 import type { AdapterCache } from '../src/mcp/adapter-cache.js';

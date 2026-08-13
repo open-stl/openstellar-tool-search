@@ -20,6 +20,6 @@ await build({
 
 await build({
   ...shared,
-  entryPoints: ['dist/src/matcher.worker.js'],
+  entryPoints: ['dist/src/catalog/matcher.worker.js'],
   outfile: 'dist/matcher.worker.js',
 });

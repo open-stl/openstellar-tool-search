@@ -1,7 +1,7 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { tool } from '@opencode-ai/plugin';
-import type { ToolDefinition } from '../tool-provider.js';
+import type { ToolDefinition } from '../catalog/tool-provider.js';
 import type { BaseServerConfig } from './types.js';
 import type { Transport } from './transport-factory.js';
 import { closeTransport } from './transports/close-transport.js';

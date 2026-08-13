@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir, platform } from 'node:os';
+import { homedir, platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process, { env } from 'node:process';
 import { writeJsonAtomic } from '../utils/atomic-write.js';
@@ -26,10 +26,10 @@ interface AuthPersistenceOptions {
 
 export function getDefaultAuthStoragePath(): string {
   if (platform() === 'win32' && env.APPDATA) {
-    return join(env.APPDATA, 'opencode', 'tool-search', 'authorizations.json');
+    return join(env.APPDATA, 'openstellar', 'tool-search', 'authorizations.json');
   }
-  const baseDir = env.XDG_CACHE_HOME || join(homedir(), '.cache');
-  return join(baseDir, 'opencode', 'tool-search', 'authorizations.json');
+  const configHome = env.XDG_CONFIG_HOME || (env.VITEST ? join(tmpdir(), 'tool-search-test-' + process.pid + '-' + Math.random().toString(36).slice(2)) : join(homedir(), '.config'));
+  return join(configHome, 'openstellar', 'tool-search', 'authorizations.json');
 }
 
 function looksLikeSessionEntry(entry: unknown): entry is PersistedSession {

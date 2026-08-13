@@ -39,7 +39,7 @@ export class SemanticMatcher {
   }
 
   get workerAvailable(): boolean {
-    return fs.existsSync(new URL('./matcher.worker.js', import.meta.url)) || fs.existsSync(new URL('../matcher.worker.js', import.meta.url));
+    return fs.existsSync(new URL('./matcher.worker.js', import.meta.url)) || fs.existsSync(new URL('./matcher.worker.js', import.meta.url));
   }
 
   private computeHash(entries: IndexedEntry[]): string {
@@ -104,7 +104,7 @@ export class SemanticMatcher {
   private async doLoadWorker(): Promise<void> {
     const workerUrl = fs.existsSync(new URL('./matcher.worker.js', import.meta.url))
       ? new URL('./matcher.worker.js', import.meta.url)
-      : new URL('../matcher.worker.js', import.meta.url);
+      : new URL('./matcher.worker.js', import.meta.url);
     if (!this.workerAvailable) {
       this.loadError = new Error('Embedding worker module is unavailable');
       this.workerInitFailed = true;

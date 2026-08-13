@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SessionToolRegistry } from '../src/session-tool-registry.js';
+import { SessionToolRegistry } from '../src/engine/session-tool-registry.js';
 import type { ToolMeta } from '../src/types.js';
 
 describe('SessionToolRegistry', () => {

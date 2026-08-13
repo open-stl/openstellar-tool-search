@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir, platform } from 'node:os';
+import { homedir, platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process, { env } from 'node:process';
 import type { ToolMeta } from '../types.js';
@@ -49,10 +49,10 @@ export function computeFingerprint(toolMeta: ToolMeta): string {
 
 function getDefaultDeliveryHistoryPath(): string {
   if (platform() === 'win32' && env.APPDATA) {
-    return join(env.APPDATA, 'opencode', 'tool-search', 'delivery-history.json');
+    return join(env.APPDATA, 'openstellar', 'tool-search', 'session-deliveries.json');
   }
-  const baseDir = env.XDG_CACHE_HOME || join(homedir(), '.cache');
-  return join(baseDir, 'opencode', 'tool-search', 'delivery-history.json');
+  const configHome = env.XDG_CONFIG_HOME || (env.VITEST ? join(tmpdir(), 'tool-search-test-' + process.pid + '-' + Math.random().toString(36).slice(2)) : join(homedir(), '.config'));
+  return join(configHome, 'openstellar', 'tool-search', 'session-deliveries.json');
 }
 
 interface DeliveryHistoryPersistenceOptions {

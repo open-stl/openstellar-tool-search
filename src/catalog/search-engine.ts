@@ -1,6 +1,6 @@
 import type { ToolMeta, ScoreParams, EmbedConfig } from '../types.js';
 import { RankEngine } from './rank.js';
-import { SemanticMatcher } from '../matcher.js';
+import { SemanticMatcher } from './matcher.js';
 import type { ToolStore } from './tool-store.js';
 
 interface SearchEngineOptions extends Partial<ScoreParams> {

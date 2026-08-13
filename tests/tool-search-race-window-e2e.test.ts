@@ -36,12 +36,12 @@ import { ToolSearchPlugin } from '../src/plugin.js';
 import { McpToolProvider, DEFAULT_WARMUP_TIMEOUT_MS } from '../src/mcp/mcp-tool-provider.js';
 import { globalAdapterCache } from '../src/mcp/adapter-cache.js';
 import type { Transport } from '../src/mcp/transport-factory.js';
-import { ToolVault } from '../src/vault.js';
+import { ToolVault } from '../src/catalog/vault.js';
 import {
   SEARCH_TIMEOUT_MS,
   EXTENDED_WAIT_MS,
   WARMING_MESSAGE,
-} from '../src/session-runtime.js';
+} from '../src/engine/session-engine.js';
 
 // Phase-1 ceiling (2s) and phase-2 extended budget (3s).
 const CEILING_MS = SEARCH_TIMEOUT_MS;

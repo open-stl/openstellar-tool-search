@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ToolStore } from '../src/tool-store.js';
+import { ToolStore } from '../src/catalog/tool-store.js';
 import type { ToolMeta } from '../src/types.js';
 
 describe('ToolStore', () => {

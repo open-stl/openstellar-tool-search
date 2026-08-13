@@ -1,5 +1,5 @@
 import type { tool } from '@opencode-ai/plugin';
-import type { ToolProvider, ToolDefinition } from '../tool-provider.js';
+import type { ToolProvider, ToolDefinition } from '../catalog/tool-provider.js';
 import type { McpServerConfig } from './types.js';
 import type { ServerCacheEntry } from './adapter-cache.js';
 import { AdapterCache, globalAdapterCache } from './adapter-cache.js';

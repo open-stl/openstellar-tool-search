@@ -1,8 +1,9 @@
 import { tool } from '@opencode-ai/plugin';
-import type { ToolVault } from '../vault.js';
-import type { SessionToolRegistry } from '../session-tool-registry.js';
+import type { ToolVault } from '../catalog/vault.js';
+import type { SessionToolRegistry } from '../engine/session-tool-registry.js';
 import { McpToolProvider, isServerEnabled } from '../mcp/mcp-tool-provider.js';
 import type { McpServerConfig } from '../mcp/types.js';
+import type { ToolProvider, ToolDefinition } from '../catalog/tool-provider.js';
 
 /**
  * Description for a warming-up server's placeholder tool. Echoes the
@@ -189,7 +190,7 @@ export class McpWiring {
    * keep the full description end-to-end. Writes are idempotent, so repeated
    * invocations for the same tool are safe.
    */
-  private handleProviderUpdate(providerTools: import('../tool-provider.js').ToolDefinition[]): void {
+  private handleProviderUpdate(providerTools: ToolDefinition[]): void {
     this.sessionRegistry.registerProviderTools(providerTools);
     if (typeof this.provider?.getExecutableTools !== 'function') return;
     const execs = this.provider.getExecutableTools();
@@ -205,7 +206,7 @@ export class McpWiring {
    * warm-up settle (per-server propagation already happened via onUpdate;
    * this covers any listener registered after the per-server updates fired).
    */
-  private writeProviderTools(providerTools: import('../tool-provider.js').ToolDefinition[]): void {
+  private writeProviderTools(providerTools: ToolDefinition[]): void {
     this.sessionRegistry.registerProviderTools(providerTools);
     this.handleProviderUpdate(providerTools);
   }

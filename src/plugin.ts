@@ -1,6 +1,6 @@
 import type { Hooks, Plugin, PluginOptions } from '@opencode-ai/plugin';
 import type { ToolSearchConfig, EmbedConfig } from './types.js';
-import { SessionRuntime, SEARCH_IDS, DEFAULT_DEFER } from './session-runtime.js';
+import { SessionRuntime, SEARCH_IDS, DEFAULT_DEFER } from './engine/session-engine.js';
 import { UpdateCheckLifecycle } from './hooks/update-check.js';
 import { McpWiring, parseMcpConfig } from './hooks/mcp-wiring.js';
 import { DEFAULT_WARMUP_TIMEOUT_MS } from './mcp/mcp-tool-provider.js';

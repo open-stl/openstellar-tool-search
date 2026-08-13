@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PluginInput } from '@opencode-ai/plugin';
-import { SessionRuntime } from '../src/session-runtime.js';
+import { SessionRuntime } from '../src/engine/session-engine.js';
 
 describe('Sleev External Compaction Live Loop Test', () => {
   const dummyCtx = {

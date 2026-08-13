@@ -54,8 +54,8 @@ import { ToolSearchPlugin } from '../src/plugin.js';
 import { McpToolProvider } from '../src/mcp/mcp-tool-provider.js';
 import { globalAdapterCache } from '../src/mcp/adapter-cache.js';
 import type { Transport } from '../src/mcp/transport-factory.js';
-import { SEARCH_TIMEOUT_MS, EXTENDED_WAIT_MS, WARMING_MESSAGE } from '../src/session-runtime.js';
-import { ToolVault } from '../src/vault.js';
+import { SEARCH_TIMEOUT_MS, EXTENDED_WAIT_MS, WARMING_MESSAGE } from '../src/engine/session-engine.js';
+import { ToolVault } from '../src/catalog/vault.js';
 
 // Phase-1 readiness ceiling (SEARCH_TIMEOUT_MS = 2s) and phase-2 extended
 // budget (EXTENDED_WAIT_MS = 3s). A slow-but-alive server answering between

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RankEngine } from '../src/rank.js';
+import { RankEngine } from '../src/catalog/rank.js';
 
 describe('RankEngine', () => {
   const items = [

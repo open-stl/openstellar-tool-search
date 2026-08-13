@@ -4,8 +4,8 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { env } from 'node:process';
 import type { Plugin, PluginInput, PluginOptions } from '@opencode-ai/plugin';
-import { AuthPersistence, getDefaultAuthStoragePath, type PersistedToolAuthorization } from '../src/auth-persistence.js';
-import { AuthorizationState } from '../src/authorization-state.js';
+import { AuthPersistence, getDefaultAuthStoragePath, type PersistedToolAuthorization } from '../src/engine/auth-persistence.js';
+import { AuthorizationState } from '../src/engine/authorization-state.js';
 import { ToolSearchPlugin } from '../src/plugin.js';
 
 const FIXTURE_TOOLS = [
@@ -339,19 +339,24 @@ describe('AuthPersistence (Unit Tests)', () => {
 describe('Phase 2 E2E: Authorization Persistence across Restarts', () => {
   let testDir: string;
   let testFilePath: string;
-  const origXdg = env.XDG_CACHE_HOME;
+  const origXdgConfig = env.XDG_CONFIG_HOME;
+  const origXdgCache = env.XDG_CACHE_HOME;
   const origAppData = env.APPDATA;
 
   beforeEach(() => {
     testDir = join(tmpdir(), `tool-search-e2e-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(testDir, { recursive: true });
+    env.XDG_CONFIG_HOME = testDir;
     env.XDG_CACHE_HOME = testDir;
     delete env.APPDATA;
     testFilePath = getDefaultAuthStoragePath();
   });
 
   afterEach(() => {
-    if (origXdg !== undefined) env.XDG_CACHE_HOME = origXdg;
+    if (origXdgConfig !== undefined) env.XDG_CONFIG_HOME = origXdgConfig;
+    else delete env.XDG_CONFIG_HOME;
+
+    if (origXdgCache !== undefined) env.XDG_CACHE_HOME = origXdgCache;
     else delete env.XDG_CACHE_HOME;
 
     if (origAppData !== undefined) env.APPDATA = origAppData;

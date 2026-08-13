@@ -6,7 +6,7 @@ import {
   DeliveryHistory,
   DeliveryHistoryPersistence,
   computeFingerprint,
-} from '../src/delivery-history.js';
+} from '../src/engine/delivery-history.js';
 import type { ToolMeta } from '../src/types.js';
 
 // ---------------------------------------------------------------------------
@@ -26,6 +26,23 @@ const toolAChanged = makeTool('tool_a', 'Tool A UPDATED description', { type: 'o
 // ---------------------------------------------------------------------------
 
 describe('DeliveryHistory', () => {
+  let testDir: string;
+  const origXdgConfig = process.env.XDG_CONFIG_HOME;
+
+  beforeEach(() => {
+    testDir = mkdtempSync(join(tmpdir(), 'tool-search-dh-root-test-'));
+    process.env.XDG_CONFIG_HOME = testDir;
+  });
+
+  afterEach(() => {
+    if (origXdgConfig !== undefined) {
+      process.env.XDG_CONFIG_HOME = origXdgConfig;
+    } else {
+      delete process.env.XDG_CONFIG_HOME;
+    }
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
   describe('filterNewDiscoveries splits correctly', () => {
     it('all hits are new on empty history', () => {
       const dh = new DeliveryHistory();
