@@ -153,9 +153,9 @@ export class SessionEngine {
       this.alerted = true;
       alert = {
         title: 'Tool Search',
-        message: `${deferrals}/${total} tools deferred.`,
+        message: `${deferrals}/${total} tools deferred. Use tool_search to discover capabilities.`,
         variant: 'info',
-        duration: 4000,
+        duration: 5000,
       };
     }
 

@@ -19,9 +19,12 @@ interface PersistedSession {
 
 type PersistedAuthMap = Record<string, PersistedSession>;
 
+export const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
 interface AuthPersistenceOptions {
   filePath?: string;
   debounceMs?: number;
+  ttlMs?: number;
 }
 
 export function getDefaultAuthStoragePath(): string {
@@ -44,6 +47,7 @@ function looksLikeSessionEntry(entry: unknown): entry is PersistedSession {
 export class AuthPersistence {
   private filePath: string;
   private debounceMs: number;
+  private ttlMs: number;
   private timer: NodeJS.Timeout | null = null;
   private pendingState: { authorizations: Map<string, Set<PersistedToolAuthorization>>; lastSeen?: Map<string, number> } | null = null;
   private writePromise: Promise<void> | null = null;
@@ -55,6 +59,7 @@ export class AuthPersistence {
     // Accepted-loss window: 50ms debounce window accepts write loss on sudden SIGKILL/uncaught crash.
     // Flush on process 'beforeExit' ensures clean exit persistence.
     this.debounceMs = options.debounceMs ?? 50;
+    this.ttlMs = options.ttlMs ?? THIRTY_DAYS_MS;
 
     if (typeof process !== 'undefined' && typeof process.on === 'function') {
       process.on('beforeExit', () => {
@@ -85,8 +90,14 @@ export class AuthPersistence {
         return { authorizations, lastSeen };
       }
 
+      const now = Date.now();
       for (const [sessionID, entry] of Object.entries(data)) {
         if (!looksLikeSessionEntry(entry)) {
+          continue;
+        }
+
+        // Expire sessions older than ttlMs
+        if (typeof entry.lastSeen === 'number' && now - entry.lastSeen > this.ttlMs) {
           continue;
         }
 
@@ -208,8 +219,11 @@ export class AuthPersistence {
         }
 
         // Validate persisted structure without expiring entries by elapsed time.
+        const now = Date.now();
         for (const [sessionID, entry] of Object.entries(mergedPayload)) {
           if (!looksLikeSessionEntry(entry)) {
+            delete mergedPayload[sessionID];
+          } else if (typeof entry.lastSeen === 'number' && now - entry.lastSeen > this.ttlMs) {
             delete mergedPayload[sessionID];
           }
         }
@@ -279,8 +293,11 @@ export class AuthPersistence {
         }
       }
 
+      const now = Date.now();
       for (const [sessionID, entry] of Object.entries(mergedPayload)) {
         if (!looksLikeSessionEntry(entry)) {
+          delete mergedPayload[sessionID];
+        } else if (typeof entry.lastSeen === 'number' && now - entry.lastSeen > this.ttlMs) {
           delete mergedPayload[sessionID];
         }
       }

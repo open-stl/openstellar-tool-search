@@ -74,7 +74,14 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     await mcp.preWarm();
   }
 
-  setTimeout(() => toast(ctx, 'Tool Search', 'Active — tools will be deferred on first prompt.', 'info', 4000), 3000);
+  setTimeout(() => {
+    const total = runtime.vault.count;
+    const deferrals = runtime.sessionRegistry.deferredCount;
+    const msg = deferrals > 0
+      ? `Active — ${deferrals}/${total} tools deferred for search optimization.`
+      : 'Active — tools will be deferred on first prompt.';
+    toast(ctx, 'Tool Search', msg, 'info', 4000);
+  }, 3000);
 
   const hooks: Hooks = {
     config: async (cfg) => {

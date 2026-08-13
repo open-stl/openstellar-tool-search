@@ -122,11 +122,16 @@ describe('AuthPersistence (Unit Tests)', () => {
     expect(Array.from(authorizations.get('mixed-session')!)).toEqual(['ordinary_tool', validStructured]);
   });
 
-  it('loads authorization without elapsed-time expiration or pruning', () => {
+  it('expires sessions older than 30 days during load', () => {
+    const now = Date.now();
     const initialData = {
       'old-session': {
         tools: ['toolA', 'toolB'],
-        lastSeen: 1,
+        lastSeen: now - (31 * 24 * 60 * 60 * 1000), // 31 days old
+      },
+      'active-session': {
+        tools: ['toolC'],
+        lastSeen: now - (10 * 24 * 60 * 60 * 1000), // 10 days old
       },
     };
     writeFileSync(testFilePath, JSON.stringify(initialData), 'utf-8');
@@ -134,9 +139,9 @@ describe('AuthPersistence (Unit Tests)', () => {
     const ap = new AuthPersistence({ filePath: testFilePath });
     const { authorizations, lastSeen } = ap.load();
 
-    expect(Array.from(authorizations.get('old-session')!)).toEqual(['toolA', 'toolB']);
-    expect(lastSeen.get('old-session')).toBe(1);
-    expect(JSON.parse(readFileSync(testFilePath, 'utf-8'))).toEqual(initialData);
+    expect(authorizations.has('old-session')).toBe(false);
+    expect(authorizations.has('active-session')).toBe(true);
+    expect(Array.from(authorizations.get('active-session')!)).toEqual(['toolC']);
   });
 
   it('handles invalid JSON gracefully (fail-open)', () => {
