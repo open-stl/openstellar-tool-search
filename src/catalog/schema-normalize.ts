@@ -8,7 +8,9 @@ export function inlineLocalReferences(value: unknown, definitions?: Record<strin
   const record = value as Record<string, unknown>;
   const localDefinitions = definitions ?? (typeof record.$defs === 'object' && record.$defs !== null
     ? record.$defs as Record<string, unknown>
-    : undefined);
+    : typeof record.definitions === 'object' && record.definitions !== null
+      ? record.definitions as Record<string, unknown>
+      : undefined);
   if (typeof record.$ref === 'string' && localDefinitions) {
     const name = record.$ref.match(/^#\/\$defs\/(.+)$/)?.[1] ?? record.$ref.match(/^#\/definitions\/(.+)$/)?.[1];
     if (name && !seen.has(name)) {
@@ -108,7 +110,9 @@ function isEffectSchema(value: unknown): value is object {
 }
 
 export function normalizeParameters(parameters: unknown, jsonSchema?: unknown): unknown {
-  if (jsonSchema !== undefined) return jsonSchema;
+  if (jsonSchema !== undefined) {
+    return hasLocalReference(jsonSchema) ? inlineLocalReferences(jsonSchema) : jsonSchema;
+  }
   if (isEffectSchema(parameters)) return convertEffectSchema(parameters);
   return parameters;
 }
