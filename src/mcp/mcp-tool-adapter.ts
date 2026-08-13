@@ -1,3 +1,4 @@
+import { inlineLocalReferences } from '../catalog/schema-normalize.js';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { tool } from '@opencode-ai/plugin';
@@ -179,8 +180,9 @@ export function convertMcpTool(
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): ReturnType<typeof tool> {
   const getClient = typeof clientOrGetter === 'function' ? clientOrGetter : () => clientOrGetter;
-  const zodSchema = mcpTool.inputSchema
-    ? jsonSchemaToZod(mcpTool.inputSchema)
+  const inlinedSchema = mcpTool.inputSchema ? inlineLocalReferences(mcpTool.inputSchema) : undefined;
+  const zodSchema = inlinedSchema
+    ? jsonSchemaToZod(inlinedSchema)
     : zObj.object({});
 
   return tool({
@@ -403,18 +405,22 @@ export function adaptMcpTool(
 ): AdaptedMcpTool {
   const toolId = sanitizeToolId(serverName, mcpTool.name);
 
+  const sanitizedSchema = mcpTool.inputSchema
+    ? inlineLocalReferences(mcpTool.inputSchema)
+    : undefined;
+
   return {
     definition: {
       id: toolId,
       description: mcpTool.description ?? '',
-      parameters: mcpTool.inputSchema ?? {},
+      parameters: (sanitizedSchema as Record<string, unknown>) ?? {},
       deferred: deferral,
     },
     executable: convertMcpTool(
       {
         name: mcpTool.name,
         description: mcpTool.description,
-        inputSchema: mcpTool.inputSchema,
+        inputSchema: sanitizedSchema as Record<string, unknown>,
       },
       getClient,
       timeoutMs,

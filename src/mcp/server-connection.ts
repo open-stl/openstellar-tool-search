@@ -1,4 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 import type { BaseServerConfig } from './types.js';
 import type { Transport } from './transport-factory.js';
 
@@ -7,6 +9,8 @@ import type { Transport } from './transport-factory.js';
  */
 export const MCP_CLIENT_NAME = 'openstellar-tool-search';
 export const MCP_CLIENT_VERSION = '1.0.0';
+
+const AnyPassthroughSchema = z.object({}).passthrough();
 
 interface McpConnection {
   client: Client;
@@ -32,6 +36,17 @@ export async function createMcpConnection<T extends BaseServerConfig>(
     { name: MCP_CLIENT_NAME, version: MCP_CLIENT_VERSION },
     { capabilities: {} },
   );
+
+  // Bypass rigid AJV validation on tools/list responses when servers use external $ref ($defs)
+  const origRequest = client.request.bind(client);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client.request = function (request: any, schema: any, options: any) {
+    if (schema === ListToolsResultSchema) {
+      return origRequest(request, AnyPassthroughSchema, options);
+    }
+    return origRequest(request, schema, options);
+  };
+
   const transport = await connect(server, client);
   return { client, transport };
 }

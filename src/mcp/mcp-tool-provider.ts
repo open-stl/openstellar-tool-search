@@ -126,7 +126,6 @@ export class McpToolProvider implements ToolProvider {
         const work = (async (): Promise<ToolDefinition[]> => {
           const serverTools: ToolDefinition[] = [];
           try {
-            console.log(`\x1b[36m[Tool Search]\x1b[0m Connecting MCP server "${serverName}"...`);
             const cacheEntry = await this.getConnection(serverConfig, serverName);
             const mcpToolsResult = await cacheEntry.client.listTools();
 
@@ -147,9 +146,11 @@ export class McpToolProvider implements ToolProvider {
               serverTools.push(definition);
               this.executableTools.set(definition.id, executable);
             }
-            console.log(`\x1b[36m[Tool Search]\x1b[0m Connected MCP server "${serverName}" — loaded ${serverTools.length} tool(s).`);
+            console.log(`\x1b[36m[Tool Search]\x1b[0m \x1b[32m✔ Connected\x1b[0m MCP server \x1b[1m"${serverName}"\x1b[0m — loaded \x1b[33m${serverTools.length}\x1b[0m tool(s).`);
           } catch (err) {
-            console.warn(`\x1b[33m[Tool Search]\x1b[0m Failed connecting MCP server "${serverName}": ${err instanceof Error ? err.message : String(err)}`);
+            let errMsg = err instanceof Error ? err.message : String(err);
+            errMsg = errMsg.replace(/\s*\.?\s*Is the computer able to access the url\??/gi, '');
+            console.warn(`\x1b[36m[Tool Search]\x1b[0m \x1b[31m✖ Failed\x1b[0m MCP server \x1b[1m"${serverName}"\x1b[0m: \x1b[31m${errMsg}\x1b[0m`);
           }
           return serverTools;
         })();

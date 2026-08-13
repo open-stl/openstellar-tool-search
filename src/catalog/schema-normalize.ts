@@ -2,31 +2,40 @@ import { Schema, JsonSchema } from 'effect';
 
 const CACHE = new WeakMap<object, unknown>();
 
-export function inlineLocalReferences(value: unknown, definitions?: Record<string, unknown>, seen = new Set<string>()): unknown {
-  if (Array.isArray(value)) return value.map((item) => inlineLocalReferences(item, definitions, seen));
+export function inlineLocalReferences(
+  value: unknown,
+  rootSchema?: Record<string, unknown>,
+  seen = new Set<string>(),
+): unknown {
+  if (Array.isArray(value)) return value.map((item) => inlineLocalReferences(item, rootSchema, seen));
   if (typeof value !== 'object' || value === null) return value;
   const record = value as Record<string, unknown>;
-  const localDefinitions = definitions ?? (typeof record.$defs === 'object' && record.$defs !== null
-    ? record.$defs as Record<string, unknown>
-    : typeof record.definitions === 'object' && record.definitions !== null
-      ? record.definitions as Record<string, unknown>
-      : undefined);
-  if (typeof record.$ref === 'string' && localDefinitions) {
+  const currentRoot = rootSchema ?? record;
+
+  if (typeof record.$ref === 'string') {
     const name = record.$ref.match(/^#\/\$defs\/(.+)$/)?.[1] ?? record.$ref.match(/^#\/definitions\/(.+)$/)?.[1];
     if (name && !seen.has(name)) {
-      const target = localDefinitions[name];
+      const defs = (typeof currentRoot.$defs === 'object' && currentRoot.$defs !== null
+        ? currentRoot.$defs as Record<string, unknown>
+        : typeof currentRoot.definitions === 'object' && currentRoot.definitions !== null
+          ? currentRoot.definitions as Record<string, unknown>
+          : undefined);
+      const target = defs?.[name];
       if (target && typeof target === 'object') {
         const { $ref: _drop, ...rest } = record;
         return inlineLocalReferences(
           { ...(target as Record<string, unknown>), ...rest },
-          localDefinitions,
+          currentRoot,
           new Set(seen).add(name),
         );
       }
+      // If reference is unresolved at local level, strip $ref to prevent downstream resolver crashes
+      const { $ref: _drop, ...rest } = record;
+      return inlineLocalReferences(rest, currentRoot, seen);
     }
   }
   return Object.fromEntries(
-    Object.entries(record).map(([key, item]) => [key, inlineLocalReferences(item, localDefinitions, seen)]),
+    Object.entries(record).map(([key, item]) => [key, inlineLocalReferences(item, currentRoot, seen)]),
   );
 }
 
