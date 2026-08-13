@@ -126,7 +126,7 @@ export class McpToolProvider implements ToolProvider {
         const work = (async (): Promise<ToolDefinition[]> => {
           const serverTools: ToolDefinition[] = [];
           try {
-            console.log(`\x1b[36m[Tool Search]\x1b[0m Starting MCP server connection: "${serverName}"...`);
+            console.log(`\x1b[36m[Tool Search]\x1b[0m Connecting MCP server "${serverName}"...`);
             const cacheEntry = await this.getConnection(serverConfig, serverName);
             const mcpToolsResult = await cacheEntry.client.listTools();
 
