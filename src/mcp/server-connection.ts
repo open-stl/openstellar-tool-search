@@ -1,6 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
+import { inlineLocalReferences } from '../catalog/schema-normalize.js';
 import type { BaseServerConfig } from './types.js';
 import type { Transport } from './transport-factory.js';
 
@@ -9,8 +8,6 @@ import type { Transport } from './transport-factory.js';
  */
 export const MCP_CLIENT_NAME = 'openstellar-tool-search';
 export const MCP_CLIENT_VERSION = '1.0.0';
-
-const AnyPassthroughSchema = z.object({}).passthrough();
 
 interface McpConnection {
   client: Client;
@@ -37,16 +34,31 @@ export async function createMcpConnection<T extends BaseServerConfig>(
     { capabilities: {} },
   );
 
-  // Bypass rigid AJV validation on tools/list responses when servers use external $ref ($defs)
-  const origRequest = client.request.bind(client);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  client.request = function (request: any, schema: any, options: any) {
-    if (schema === ListToolsResultSchema) {
-      return origRequest(request, AnyPassthroughSchema, options);
-    }
-    return origRequest(request, schema, options);
-  };
-
   const transport = await connect(server, client);
+
+  // Safely guard against transport wrapper mocks in test environments that lack transport.send
+  if (transport && typeof (transport as unknown as Record<string, unknown>).send === 'function') {
+    const rawTransport = transport as unknown as { send: (...args: unknown[]) => Promise<unknown>; onmessage?: (msg: unknown) => void };
+    const origSend = rawTransport.send.bind(rawTransport);
+    rawTransport.send = async function (message: unknown, options: unknown) {
+      if (message && typeof message === 'object' && (message as { method?: string }).method === 'tools/list') {
+        const origOnMessage = rawTransport.onmessage;
+        rawTransport.onmessage = function (response: unknown) {
+          if (response && typeof response === 'object') {
+            const resObj = response as { result?: { tools?: Array<{ inputSchema?: unknown; outputSchema?: unknown }> } };
+            if (resObj.result && Array.isArray(resObj.result.tools)) {
+              for (const t of resObj.result.tools) {
+                if (t.inputSchema) t.inputSchema = inlineLocalReferences(t.inputSchema);
+                if (t.outputSchema) t.outputSchema = inlineLocalReferences(t.outputSchema);
+              }
+            }
+          }
+          if (origOnMessage) origOnMessage(response);
+        };
+      }
+      return origSend(message, options);
+    };
+  }
+
   return { client, transport };
 }

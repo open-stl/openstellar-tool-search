@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { Stream } from 'node:stream';
+import { inlineLocalReferences } from '../../catalog/schema-normalize.js';
 import type { LocalMcpServerConfig } from '../types.js';
 import type { Transport, TransportConnector } from '../transport-factory.js';
 import { closeTransport } from './close-transport.js';
@@ -31,6 +32,31 @@ export class LocalTransportConnector implements TransportConnector<LocalMcpServe
     });
     const stderrTrace = this.captureStderr(transport.stderr);
     const handshakeTimeout = server.timeout ?? (cmd === 'npx' ? 180000 : undefined);
+
+    // In-flight Transport Interceptor: sanitize & inline local $ref ($defs) in tools/list JSON RPC responses
+    // BEFORE the MCP SDK's client._onresponse validator parses them. This solves external/nested $ref
+    // resolution failures on local MCP servers.
+    const origSend = transport.send.bind(transport);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    transport.send = async function (message: any) {
+      if (message && typeof message === 'object' && message.method === 'tools/list') {
+        const origOnMessage = transport.onmessage;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        transport.onmessage = function (response: any) {
+          if (response && typeof response === 'object') {
+            const resObj = response as { result?: { tools?: Array<{ inputSchema?: unknown; outputSchema?: unknown }> } };
+            if (resObj.result && Array.isArray(resObj.result.tools)) {
+              for (const t of resObj.result.tools) {
+                if (t.inputSchema) t.inputSchema = inlineLocalReferences(t.inputSchema);
+                if (t.outputSchema) t.outputSchema = inlineLocalReferences(t.outputSchema);
+              }
+            }
+          }
+          if (origOnMessage) origOnMessage(response);
+        };
+      }
+      return origSend(message);
+    };
 
     try {
       await client.connect(transport, handshakeTimeout ? { timeout: handshakeTimeout } : undefined);
