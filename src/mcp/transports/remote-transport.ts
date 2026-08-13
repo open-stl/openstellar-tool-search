@@ -2,7 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { RemoteMcpServerConfig } from '../types.js';
 import type { Transport, TransportConnector } from '../transport-factory.js';
-import { closeTransport } from '../utils/close-transport.js';
+import { closeTransport } from './close-transport.js';
 
 export class RemoteTransportConnector implements TransportConnector<RemoteMcpServerConfig> {
   async connect(server: RemoteMcpServerConfig, client: Client): Promise<Transport> {

@@ -3,7 +3,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { Stream } from 'node:stream';
 import type { LocalMcpServerConfig } from '../types.js';
 import type { Transport, TransportConnector } from '../transport-factory.js';
-import { closeTransport } from '../utils/close-transport.js';
+import { closeTransport } from './close-transport.js';
 
 export const STDERR_CAPTURE_LIMIT_BYTES = 8192;
 
