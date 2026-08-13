@@ -24,11 +24,11 @@ export function isServerEnabled(s: any): boolean {
 const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
 const UNNAMED_SERVER = 'unnamed';
 /**
- * Per-server warm-up ceiling. A server still unsettled at its ceiling is CUT
+ * Per-server warm-up timeout. A server still unsettled at its timeout is CUT
  * (fail-open, contributes no tools) and a console.warn names it. Must exceed
  * the search executors' combined budget (2s + 3s) AND real slow servers
  * (~10.5s agentmemory) so they settle before the factory returns — 60s does.
- * Injectable per-provider (and per-plugin via preWarmMs) for tests.
+ * Injectable per-provider (and per-plugin via the `timeout` config) for tests.
  */
 export const DEFAULT_WARMUP_TIMEOUT_MS = 60_000;
 

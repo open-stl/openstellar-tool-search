@@ -6,10 +6,12 @@
       {
         "mode": "keyword",
         "mcp": {
-          "race-probe": {
-            "type": "local",
-            "command": ["node", "/Volumes/DB/Projects/openstellar-tool-search/fixtures/race-probe-mcp-server.mjs"],
-            "defer_loading": true
+          "servers": {
+            "race-probe": {
+              "type": "local",
+              "command": ["node", "/Volumes/DB/Projects/openstellar-tool-search/fixtures/race-probe-mcp-server.mjs"],
+              "defer_loading": true
+            }
           }
         }
       }

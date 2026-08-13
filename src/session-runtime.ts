@@ -5,6 +5,7 @@ import type { EmbedConfig } from './types.js';
 import { SessionToolRegistry } from './session-tool-registry.js';
 import { toast } from './hooks/toast.js';
 import { truncateDescription } from './hooks/deferral.js';
+import { normalizeParameters } from './schema-normalize.js';
 
 export const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
 export const DEFAULT_DEFER = '[deferred]';
@@ -96,10 +97,16 @@ export class SessionRuntime {
    * Register a tool definition into the catalog. Returns the description to
    * show in the tool.definition output: the deferred form (first sentence +
    * label) for newly deferred tools, or the original description untouched.
-   * The catalog stores the parameter object by reference (never cloned).
+   *
+   * Parameters are normalized BEFORE catalog storage: Effect Schema instances
+   * (opencode passes raw `Schema` objects for Effect-declared tools) become
+   * model-facing JSON Schema via `normalizeParameters`, so the catalog,
+   * `tool_search` output, fingerprints, and the search index never see the
+   * internal Effect AST. Plain JSON Schema (MCP `inputSchema`) and empty
+   * values pass through by reference, untouched.
    */
-  public deferTool(toolID: string, description: string, parameters: unknown): string {
-    this.vault.add(toolID, description, parameters);
+  public deferTool(toolID: string, description: string, parameters: unknown, jsonSchema?: unknown): string {
+    this.vault.add(toolID, description, normalizeParameters(parameters, jsonSchema));
     if (this.sessionRegistry.registerTool(toolID)) {
       return truncateDescription(description, this.deferLabel);
     }
@@ -173,9 +180,198 @@ export class SessionRuntime {
     return { total, deferrals, policyText, alert };
   }
 
+  private extractMessageText(msg: unknown): string {
+    if (!msg || typeof msg !== 'object') return '';
+    const obj = msg as Record<string, unknown>;
+    let text = '';
+
+    if (typeof obj.content === 'string') {
+      text += obj.content + ' ';
+    } else if (Array.isArray(obj.content)) {
+      for (const item of obj.content) {
+        if (typeof item === 'string') {
+          text += item + ' ';
+        } else if (item && typeof item === 'object') {
+          const itemObj = item as Record<string, unknown>;
+          if (typeof itemObj.text === 'string') text += itemObj.text + ' ';
+          if (typeof itemObj.content === 'string') text += itemObj.content + ' ';
+        }
+      }
+    }
+
+    if (Array.isArray(obj.parts)) {
+      for (const part of obj.parts) {
+        if (typeof part === 'string') {
+          text += part + ' ';
+        } else if (part && typeof part === 'object') {
+          const partObj = part as Record<string, unknown>;
+          if (typeof partObj.text === 'string') text += partObj.text + ' ';
+          if (typeof partObj.content === 'string') text += partObj.content + ' ';
+        }
+      }
+    }
+
+    if (Array.isArray(obj.blocks)) {
+      for (const block of obj.blocks) {
+        if (block && typeof block === 'object') {
+          const blockObj = block as Record<string, unknown>;
+          if (typeof blockObj.text === 'string') text += blockObj.text + ' ';
+          if (Array.isArray(blockObj.content)) {
+            for (const c of blockObj.content) {
+              if (c && typeof c === 'object' && typeof (c as Record<string, unknown>).text === 'string') {
+                text += (c as Record<string, unknown>).text + ' ';
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Strip sleev compressed summaries so compressed text doesn't falsely satisfy active presence
+    text = text.replace(/<sleev-id-compressed>[\s\S]*?<\/sleev-id-compressed>/gi, '');
+
+    return text;
+  }
+
   public compactSession(sessionID: string | undefined): string {
     this.sessionRegistry.compactSession(sessionID);
     return '[Tool Search] Session compacted. Deferred tool authorizations have been reset — search for any tools you need to use.';
+  }
+
+  /**
+   * Dynamically verify that authorized tools are actually present in the active conversation context.
+   * If a message containing a tool's search result was pruned (by Sleev, compaction, or context trimming),
+   * this selectively revokes authorization for that specific tool so the LLM is prompted to re-search.
+   */
+  public syncActiveAuthorizations(
+    sessionID: string | undefined,
+    messages?: Array<{ role?: string; content?: unknown }>,
+  ): string[] {
+    if (!sessionID || !messages || messages.length === 0) return [];
+
+    const authorized = this.sessionRegistry.getAuthorizedTools(sessionID);
+    if (authorized.length === 0) return [];
+
+    let combinedText = '';
+    for (const msg of messages) {
+      combinedText += this.extractMessageText(msg) + '\n';
+    }
+
+    const revoked: string[] = [];
+    for (const toolID of authorized) {
+      const escaped = toolID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const presenceRegex = new RegExp(`(?:^|\\W)${escaped}(?::|\\b)`, 'm');
+      if (!presenceRegex.test(combinedText)) {
+        revoked.push(toolID);
+      }
+    }
+
+    if (revoked.length > 0) {
+      this.sessionRegistry.revokeTools(sessionID, revoked);
+    }
+
+    return revoked;
+  }
+
+  /**
+   * ID-Aware Sleev Compression Sync:
+   * Inspects message history for completed `compress` tool calls, gathers all pruned message IDs,
+   * checks which authorized tools were delivered inside those pruned message blocks (<sleev-id-mXXXX>),
+   * and selectively revokes authorizations for tools whose schemas were pruned from active context.
+   */
+  public syncSleevCompression(
+    sessionID: string | undefined,
+    messages?: Array<unknown>,
+  ): string[] {
+    if (!sessionID || !messages || messages.length === 0) return [];
+
+    const authorized = this.sessionRegistry.getAuthorizedTools(sessionID);
+    if (authorized.length === 0) return [];
+
+    // 1. Collect all pruned message IDs from completed `compress` tool calls
+    const prunedIds = new Set<string>();
+
+    for (const msg of messages) {
+      if (!msg || typeof msg !== 'object') continue;
+      const msgObj = msg as Record<string, unknown>;
+
+      // Check parts array (OpenCode format)
+      if (Array.isArray(msgObj.parts)) {
+        for (const part of msgObj.parts) {
+          if (part && typeof part === 'object') {
+            const p = part as Record<string, unknown>;
+            if (p.type === 'tool' && p.tool === 'compress') {
+              const state = p.state as Record<string, unknown> | undefined;
+              if (state?.status === 'completed' || p.status === 'completed') {
+                const input = (state?.input || p.input) as Record<string, unknown> | undefined;
+                if (Array.isArray(input?.ids)) {
+                  for (const id of input.ids) {
+                    if (typeof id === 'string') prunedIds.add(id);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Check tool_calls array (API format)
+      if (Array.isArray(msgObj.tool_calls)) {
+        for (const tc of msgObj.tool_calls) {
+          if (tc && typeof tc === 'object') {
+            const fn = (tc as Record<string, unknown>).function as Record<string, unknown> | undefined;
+            if (fn?.name === 'compress' && typeof fn.arguments === 'string') {
+              try {
+                const parsedArgs = JSON.parse(fn.arguments);
+                if (Array.isArray(parsedArgs.ids)) {
+                  for (const id of parsedArgs.ids) {
+                    if (typeof id === 'string') prunedIds.add(id);
+                  }
+                }
+              } catch {
+                // ignore parse error
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (prunedIds.size === 0) {
+      return this.syncActiveAuthorizations(sessionID, messages as any);
+    }
+
+    // 2. Identify unpruned message text
+    let activeText = '';
+    for (const msg of messages) {
+      const fullText = this.extractMessageText(msg);
+      // Check if this text chunk is wrapped with a sleev message ID
+      const tagMatch = fullText.match(/<sleev-id-(m\d+)>/i);
+      if (tagMatch) {
+        const msgId = tagMatch[1];
+        if (prunedIds.has(msgId)) {
+          // This message has been pruned by Sleev, skip it
+          continue;
+        }
+      }
+      activeText += fullText + '\n';
+    }
+
+    // 3. For each authorized tool, check if it exists in the active (unpruned) text
+    const revoked: string[] = [];
+    for (const toolID of authorized) {
+      const escaped = toolID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const presenceRegex = new RegExp(`(?:^|\\W)${escaped}(?::|\\b)`, 'm');
+      if (!presenceRegex.test(activeText)) {
+        revoked.push(toolID);
+      }
+    }
+
+    if (revoked.length > 0) {
+      this.sessionRegistry.revokeTools(sessionID, revoked);
+    }
+
+    return revoked;
   }
 
   public deleteSession(sessionID: string | undefined): void {

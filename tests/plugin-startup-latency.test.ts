@@ -15,14 +15,14 @@ import { DEFAULT_WARMUP_TIMEOUT_MS } from '../src/mcp/mcp-tool-provider.js';
  *
  * opencode freezes the session tool-set at start (~0-2s); MCP tools registered
  * after that snapshot are permanently uncallable. So the factory now BLOCKS
- * (bounded ≤ preWarmMs / per-server deadline) until warm-up settles. Three
+ * (bounded ≤ timeout / per-server deadline) until warm-up settles. Three
  * cases:
  *   L1 no-MCP:      no mcp config → no pre-warm call, no delay (<100ms).
  *   L2 fast server: ~300ms settle → factory resolves ≈ settle (<2000ms) —
  *                   proves there is NO fixed pre-warm delay; the real tool is
  *                   in the bridge pre-snapshot.
  *   L3 hung server: fails open → factory resolves ≈ handshake timeout
- *                   (≤ the 60s per-server ceiling), bridge holds the `hanging`
+ *                   (≤ the 60s per-server timeout), bridge holds the `hanging`
  *                   placeholder re-described as failed, NO real tools.
  */
 
@@ -106,7 +106,7 @@ describe('L2: fast server resolves ≈ settle (no fixed pre-warm delay)', () => 
     const start = Date.now();
     const hooks = await ToolSearchPlugin.server(makeCtx(), {
       mode: 'keyword',
-      mcp: { fast_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true } },
+      mcp: { servers: { fast_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true } } },
     });
     const elapsed = Date.now() - start;
 
@@ -147,13 +147,15 @@ describe('L3: hanging server — factory bounded, placeholder retained (status-o
     const hooks = await ToolSearchPlugin.server(makeCtx(), {
       mode: 'keyword',
       mcp: {
-        hanging: { type: 'remote', url: baseUrl, timeout: HANDSHAKE_TIMEOUT_MS },
+        servers: {
+          hanging: { type: 'remote', url: baseUrl, timeout: HANDSHAKE_TIMEOUT_MS },
+        },
       },
     });
     const elapsed = Date.now() - start;
 
     // Bounded by the handshake fail-open (300ms), far under the 60s default
-    // per-server ceiling.
+    // per-server timeout.
     expect(elapsed).toBeLessThan(DEFAULT_WARMUP_TIMEOUT_MS);
     expect(elapsed).toBeLessThan(FAST_BUDGET_MS);
     // Bridge: placeholder for the deadlined server (re-described as failed —
@@ -166,7 +168,7 @@ describe('L3: hanging server — factory bounded, placeholder retained (status-o
     await expect(
       hooks.event!({ event: { type: 'session.deleted', properties: { sessionID: 'latency-session' } } } as any),
     ).resolves.toBeUndefined();
-    await expect(hooks.config!({ mcp: { another: { type: 'remote', url: baseUrl } } } as any)).resolves.toBeUndefined();
+    await expect(hooks.config!({ mcp: { servers: { another: { type: 'remote', url: baseUrl } } } } as any)).resolves.toBeUndefined();
   }, 25_000);
 });
 
@@ -177,14 +179,15 @@ describe('McpWiring preWarm memoization + placeholder lifecycle', () => {
       new ToolVault(),
       new SessionToolRegistry({ alwaysOn: ['tool_search'], resetTools: ['compress'] }),
       tools,
-      '[deferred]',
       250,
     );
 
     // init is synchronous-ish (registers provider + placeholders, no await).
     const start = Date.now();
     wiring.init(parseMcpConfig({
-      hanging: { type: 'remote', url: 'http://127.0.0.1:9/sse', timeout: HANDSHAKE_TIMEOUT_MS },
+      servers: {
+        hanging: { type: 'remote', url: 'http://127.0.0.1:9/sse', timeout: HANDSHAKE_TIMEOUT_MS },
+      },
     })!);
     expect(Date.now() - start).toBeLessThan(NO_MCP_BUDGET_MS);
     expect(wiring.isInitialized).toBe(true);
@@ -192,7 +195,7 @@ describe('McpWiring preWarm memoization + placeholder lifecycle', () => {
     expect(Object.keys(tools)).toEqual(['hanging']);
     expect(tools.hanging.description).toContain('still starting up');
 
-    // preWarm waits for the provider's 250ms ceiling (hung server cut), then
+    // preWarm waits for the provider's 250ms timeout (hung server cut), then
     // memoized (same promise).
     const p1 = wiring.preWarm();
     const p2 = wiring.preWarm();

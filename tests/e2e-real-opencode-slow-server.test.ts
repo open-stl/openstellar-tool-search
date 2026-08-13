@@ -7,12 +7,12 @@
  * opencode freezes the session tool-set at start (~0-2s); MCP tools registered
  * after that snapshot are permanently uncallable. The fix: the plugin factory
  * WAIT-ALLs until every enabled server settles or is cut at its per-server
- * ceiling (preWarmMs, default 60s), so MCP tools are in the bridge BEFORE the
+ * timeout (default 60s), so MCP tools are in the bridge BEFORE the
  * snapshot. Anything that settles is first-class; anything cut is honestly
  * absent (status-only placeholder retained).
  *
  * SCENARIO (ONE `opencode run`, slow-probe server with ~10s handshake, default
- * preWarmMs = 60s): the factory waits out the 10s server, so the model's
+ * timeout = 60s): the factory waits out the 10s server, so the model's
  * FIRST turn must see the REAL tool `slow_probe_ping` in its tool list AND be
  * able to call it directly (getting "slow-probe pong"). If the model instead
  * sees only the placeholder / cannot call the tool → the fix is broken.

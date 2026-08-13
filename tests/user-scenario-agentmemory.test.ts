@@ -12,7 +12,7 @@
  * tools and answered "ไม่มี agentmemory" — it didn't even know to tool_search.
  *
  * WAIT-ALL design: the factory blocks until every enabled server settles or is
- * cut at its per-server ceiling (preWarmMs, default 60s — covers the ~10.5s
+ * cut at its per-server timeout (default 60s — covers the ~10.5s
  * agentmemory boot). So after the factory returns, the REAL agentmemory tools
  * are in the bridge PRE-SNAPSHOT, and the placeholder is removed (server
  * settled with tools). The model's first prompt sees the real tools.
@@ -36,10 +36,12 @@ const E2E_ENABLED = process.env.E2E_AGENTMEMORY === '1';
 const AGENTMEMORY_CONFIG: PluginOptions = {
   mode: 'keyword',
   mcp: {
-    agentmemory: {
-      type: 'local',
-      command: ['npx', '-y', '@agentmemory/mcp'],
-      defer_loading: true,
+    servers: {
+      agentmemory: {
+        type: 'local',
+        command: ['npx', '-y', '@agentmemory/mcp'],
+        defer_loading: true,
+      },
     },
   },
 } as PluginOptions;

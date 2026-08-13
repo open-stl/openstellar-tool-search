@@ -30,17 +30,22 @@ export interface ToolSearchConfig {
   /** Tools exempt from authorization resets (e.g. ['compress']). Default: ['compress'] */
   resetTools?: string[];
 
-  /** MCP server configurations matching OpenCode's native format. */
-  mcp?: Record<string, McpServerConfig>;
+  /**
+   * MCP server configurations in the OpenCode v2 `mcp.servers` wrapper:
+   * `mcp: { servers: { "<name>": {...} } }`. The legacy bare server-map shape
+   * (`mcp: { "<name>": {...} }`) is REJECTED with a warning — this plugin
+   * follows OpenCode v2's `mcp.servers` convention.
+   */
+  mcp?: { servers: Record<string, McpServerConfig> };
 
   /**
-   * Per-server warm-up CEILING (ms): each MCP server must settle within it or
-   * is cut (fail-open, tools unavailable; a console.warn names it). The
+   * MCP pre-warm/per-server timeout (ms): each MCP server must settle within
+   * it or is cut (fail-open, tools unavailable; a console.warn names it). The
    * factory waits for ALL enabled servers to settle/cut before returning, so
    * MCP tools are registered BEFORE opencode snapshots the session tool-set
    * (~0-2s). Default: 60s (DEFAULT_WARMUP_TIMEOUT_MS).
    */
-  preWarmMs?: number;
+  timeout?: number;
 }
 
 export interface EmbedConfig {

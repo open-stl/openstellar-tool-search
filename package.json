@@ -37,10 +37,11 @@
     "url": "git+https://github.com/open-stl/openstellar-tool-search.git"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "*"
+    "@opencode-ai/plugin": "1.17.2",
+    "effect": "^4.0.0-beta.74"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "*",
+    "@opencode-ai/plugin": "1.17.2",
     "@types/node": "^25.6.0",
     "@types/semver": "^7.7.1",
     "esbuild": "^0.28.0",

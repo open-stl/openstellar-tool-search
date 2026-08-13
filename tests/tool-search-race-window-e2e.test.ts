@@ -167,8 +167,10 @@ describe('e2e: wait-all factory — resolves only after ALL enabled servers sett
       {
         mode: 'keyword',
         mcp: {
-          fast_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
-          srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
+          servers: {
+            fast_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
+            srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
+          },
         },
       },
     );
@@ -199,10 +201,12 @@ describe('e2e: wait-all factory — resolves only after ALL enabled servers sett
       makeCtx(),
       {
         mode: 'keyword',
-        preWarmMs: 300, // per-server ceiling (cuts the hung server)
+        timeout: 300, // per-server ceiling (cuts the hung server)
         mcp: {
-          fast_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
-          hung_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
+          servers: {
+            fast_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
+            hung_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
+          },
         },
       },
     );
@@ -233,10 +237,12 @@ describe('e2e: multi-provider aggregate (fast + hung in one plugin)', () => {
       makeCtx(),
       {
         mode: 'keyword',
-        preWarmMs: 300, // per-server ceiling (cuts the hung server)
+        timeout: 300, // per-server ceiling (cuts the hung server)
         mcp: {
-          fast_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
-          hung_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
+          servers: {
+            fast_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
+            hung_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
+          },
         },
       },
     );
@@ -268,10 +274,12 @@ describe('e2e: multi-provider aggregate (fast + hung in one plugin)', () => {
       makeCtx(),
       {
         mode: 'keyword',
-        preWarmMs: 300, // per-server ceiling (cuts the hung server)
+        timeout: 300, // per-server ceiling (cuts the hung server)
         mcp: {
-          fast_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
-          hung_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
+          servers: {
+            fast_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
+            hung_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true },
+          },
         },
       },
     );
@@ -316,7 +324,7 @@ describe('e2e: no-MCP regression (static tools only)', () => {
 
 describe('e2e: pre-warm — real tool pre-snapshot; failed-server honesty', () => {
   it('8a. pre-warm proof: 2.5s server settles pre-factory; real tool in bridge at resolve', async () => {
-    // Slow server (2.5s) with DEFAULT preWarmMs (60s ceiling) → the factory
+    // Slow server (2.5s) with DEFAULT timeout (60s ceiling) → the factory
     // WAIT-ALLs until warm-up settles (~2.5s), so the REAL tool is in the
     // bridge before the session snapshot. Placeholder removed (settled with
     // tools).
@@ -326,7 +334,7 @@ describe('e2e: pre-warm — real tool pre-snapshot; failed-server honesty', () =
       makeCtx(),
       {
         mode: 'keyword',
-        mcp: { srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true } },
+        mcp: { servers: { srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true } } },
       },
     );
     const loadElapsed = Date.now() - t0;
@@ -348,7 +356,7 @@ describe('e2e: pre-warm — real tool pre-snapshot; failed-server honesty', () =
   }, 15_000);
 
   it('8b. failed-server honesty: CUT server (ceiling) keeps a STATUS-ONLY placeholder', async () => {
-    // Hung server (never answers) with preWarmMs: 250 → 250ms per-server
+    // Hung server (never answers) with timeout: 250 → 250ms per-server
     // CEILING cuts it (fail-open). The placeholder is retained as a status
     // reader; the server is SETTLED (awaitReady(0) → true) so the placeholder
     // reports the failed/cut state.
@@ -358,8 +366,8 @@ describe('e2e: pre-warm — real tool pre-snapshot; failed-server honesty', () =
       makeCtx(),
       {
         mode: 'keyword',
-        preWarmMs: 250,
-        mcp: { hung_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true } },
+        timeout: 250,
+        mcp: { servers: { hung_srv: { type: 'remote', url: 'http://127.0.0.1:9/sse', defer_loading: true } } },
       },
     );
     const loadElapsed = Date.now() - t0;

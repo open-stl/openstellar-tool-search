@@ -30,9 +30,11 @@ describe('MCP Provider End-to-End Integration Suite', () => {
     const mockCtx = {} as PluginInput;
     const hooks = await ToolSearchPlugin.server(mockCtx, {
       mcp: {
-        notion: { type: 'remote', url: 'http://localhost:8080/sse', defer_loading: true },
-        github: { type: 'remote', url: 'http://localhost:8081/sse', defer_loading: true },
-        calc: { type: 'local', command: ['node', 'calc.js'], defer_loading: false },
+        servers: {
+          notion: { type: 'remote', url: 'http://localhost:8080/sse', defer_loading: true },
+          github: { type: 'remote', url: 'http://localhost:8081/sse', defer_loading: true },
+          calc: { type: 'local', command: ['node', 'calc.js'], defer_loading: false },
+        },
       },
     });
 
@@ -49,7 +51,9 @@ describe('MCP Provider End-to-End Integration Suite', () => {
     const mockCtx = {} as PluginInput;
     const hooks = await ToolSearchPlugin.server(mockCtx, {
       mcp: {
-        notion: { type: 'remote', url: 'http://localhost:8080/sse' },
+        servers: {
+          notion: { type: 'remote', url: 'http://localhost:8080/sse' },
+        },
       },
     });
 

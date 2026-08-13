@@ -30,11 +30,13 @@ describe('Top-level Standard MCP Config Hook Integration', () => {
 
     expect(hooks.config).toBeDefined();
 
-    // Trigger config hook with standard top-level mcp block
+    // Trigger config hook with standard top-level mcp block (v2 wrapper)
     if (hooks.config) {
       await hooks.config({
         mcp: {
-          codebase_memory: { type: 'local', command: ['/bin/test'] },
+          servers: {
+            codebase_memory: { type: 'local', command: ['/bin/test'] },
+          },
         },
       } as any);
     }

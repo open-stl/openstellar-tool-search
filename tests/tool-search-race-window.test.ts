@@ -82,9 +82,30 @@ const BUDGET_SLACK = 2.5;
 const MCP_TOOL = { name: 'query_docs', description: 'Query the documentation for a package' };
 const MCP_TOOL_ID = 'srv_query_docs';
 
+/**
+ * Multi-sentence MCP tool fixture: deferral truncates to the FIRST sentence +
+ * label, but the catalog must keep the FULL description (second sentence
+ * included) so tool_search can find second-sentence terms.
+ */
+const MULTI_TOOL = {
+  name: 'analyze_report',
+  description: 'Analyze the quarterly report for anomalies. It also forecasts next quarter revenue.',
+};
+const MULTI_TOOL_ID = 'detail_srv_analyze_report';
+const MULTI_FIRST_SENTENCE = 'Analyze the quarterly report for anomalies.';
+const MULTI_SECOND_SENTENCE_TERM = 'forecasts';
+
 /** Server config used BOTH for seeding the cache key and the plugin's mcp option. */
 const SRV_CONFIG = {
   name: 'srv',
+  type: 'remote' as const,
+  url: 'http://127.0.0.1:9/sse',
+  defer_loading: true,
+};
+
+/** Second server config (distinct name → distinct cache key) for the multi-sentence fixture. */
+const MULTI_SRV_CONFIG = {
+  name: 'detail_srv',
   type: 'remote' as const,
   url: 'http://127.0.0.1:9/sse',
   defer_loading: true,
@@ -140,14 +161,14 @@ function seedCache(delayMs: number, tools: { name: string; description: string }
 }
 
 /** Load the real plugin with an `mcp` config whose transport is pre-seeded. */
-async function loadPluginWithSeededMcp(delayMs: number, preWarmMs?: number): Promise<Hooks> {
+async function loadPluginWithSeededMcp(delayMs: number, timeout?: number): Promise<Hooks> {
   seedCache(delayMs);
   return (ToolSearchPlugin as (ctx: PluginInput, opts?: any) => Promise<Hooks>)(
     makeCtx(),
     {
       mode: 'keyword',
-      ...(preWarmMs !== undefined ? { preWarmMs } : {}),
-      mcp: { srv: { type: 'remote', url: SRV_CONFIG.url, defer_loading: true } },
+      ...(timeout !== undefined ? { timeout } : {}),
+      mcp: { servers: { srv: { type: 'remote', url: SRV_CONFIG.url, defer_loading: true } } },
     },
   );
 }
@@ -256,11 +277,28 @@ describe('after warm-up completes, search finds the MCP tools (fixed-path proof)
     expect(out).toContain(MCP_TOOL_ID);
     expect(out).toContain('Query the documentation for a package');
 
-    // The wiring bridge surfaces the tool with a DEFERRED description
-    // (mcp-wiring.ts:72-74 truncates + appends the deferral label).
+    // The wiring bridge surfaces the tool with the ORIGINAL FULL description
+    // (mcp-wiring.ts no longer pre-truncates; the catalog keeps the full
+    // description so tool_search returns it intact). Truncation happens at
+    // OpenCode's tool.definition hook (plugin.ts deferTool), which rewrites
+    // only the OpenCode-facing description — never the catalog.
     const bridgeTool = (hooks.tool as any)[MCP_TOOL_ID];
     expect(bridgeTool).toBeDefined();
-    expect(bridgeTool.description).toBe('Query the documentation for a package [deferred]');
+    expect(bridgeTool.description).toBe('Query the documentation for a package');
+    expect(bridgeTool.description).not.toContain('[deferred]');
+
+    // Simulate OpenCode firing tool.definition (it fires per prompt with the
+    // bridge tool's description): the OUTPUT is truncated, the catalog is not.
+    const defHook = hooks['tool.definition']!;
+    const output: any = { description: bridgeTool.description, parameters: {} };
+    await defHook({ toolID: MCP_TOOL_ID }, output);
+    expect(output.description).toBe('Query the documentation for a package [deferred]');
+
+    // tool_search STILL returns the full description — the catalog was not
+    // overwritten by the truncated tool.definition output.
+    const outAfterDef = await execSearch(searchTool, { query: 'documentation' }, 'race-sess-2a-def');
+    expect(outAfterDef).toContain('Query the documentation for a package');
+    expect(outAfterDef).not.toContain('[deferred]');
   }, 10_000);
 
   it('2b. provider warm-up awaited directly: deferred flag on the MCP tool definition', async () => {
@@ -274,12 +312,67 @@ describe('after warm-up completes, search finds the MCP tools (fixed-path proof)
     expect(definitions[0].description).toBe('Query the documentation for a package');
     clearSeeded(key);
   }, 10_000);
+
+  it('2c. multi-sentence MCP tool: tool_search returns the FULL description (no [deferred]); second-sentence terms stay searchable; tool.definition truncates to first sentence + [deferred]', async () => {
+    // Seed a SECOND server (detail_srv) whose tool has a two-sentence
+    // description. This is the regression for the pre-truncation bug: if the
+    // bridge truncated the description before tool.definition, the catalog
+    // would store "first sentence [deferred]" and tool_search would never
+    // find the second-sentence term "forecasts".
+    const key = globalAdapterCache.getServerKey(MULTI_SRV_CONFIG);
+    globalAdapterCache.set(
+      key,
+      fakeEntry(FAST_SERVER_MS, [MULTI_TOOL]) as unknown as Parameters<typeof globalAdapterCache.set>[1],
+    );
+
+    const hooks = await (ToolSearchPlugin as (ctx: PluginInput, opts?: any) => Promise<Hooks>)(
+      makeCtx(),
+      {
+        mode: 'keyword',
+        mcp: { servers: { detail_srv: { type: 'remote', url: MULTI_SRV_CONFIG.url, defer_loading: true } } },
+      },
+    );
+    await sleep(PROPAGATION_SLEEP_MS);
+
+    const searchTool = searchToolOf(hooks, 'tool_search');
+
+    // (1) tool_search returns the FULL description without [deferred].
+    const out = await execSearch(searchTool, { query: 'anomalies' }, 'race-sess-2c-full');
+    expect(out).toContain(MULTI_TOOL_ID);
+    expect(out).toContain(MULTI_FIRST_SENTENCE);
+    expect(out).toContain('It also forecasts next quarter revenue.');
+    expect(out).not.toContain('[deferred]');
+
+    // (2) Second-sentence terms remain searchable (catalog kept full desc).
+    const outSecond = await execSearch(searchTool, { query: MULTI_SECOND_SENTENCE_TERM }, 'race-sess-2c-second');
+    expect(outSecond).toContain(MULTI_TOOL_ID);
+
+    // (3) Bridge tool keeps the FULL description; tool.definition output is
+    // exactly first sentence + [deferred] — never a double label.
+    const bridgeTool = (hooks.tool as any)[MULTI_TOOL_ID];
+    expect(bridgeTool).toBeDefined();
+    expect(bridgeTool.description).toBe(
+      'Analyze the quarterly report for anomalies. It also forecasts next quarter revenue.',
+    );
+    const defHook = hooks['tool.definition']!;
+    const output: any = { description: bridgeTool.description, parameters: {} };
+    await defHook({ toolID: MULTI_TOOL_ID }, output);
+    expect(output.description).toBe(`${MULTI_FIRST_SENTENCE} [deferred]`);
+    expect(output.description).not.toContain('[deferred] [deferred]');
+
+    // tool_search still returns the full description after tool.definition fired.
+    const outAfterDef = await execSearch(searchTool, { query: 'anomalies' }, 'race-sess-2c-afterdef');
+    expect(outAfterDef).toContain('It also forecasts next quarter revenue.');
+    expect(outAfterDef).not.toContain('[deferred]');
+
+    globalAdapterCache.delete(key).catch(() => {});
+  }, 10_000);
 });
 
 describe('wait-all + ceiling: hung server is CUT; honest negative after settle', () => {
   it('3. a hung MCP server cut at its ceiling yields honest "No matches" (settled), not warming', async () => {
     // Never-resolving handshake — listTools hangs forever. With a small
-    // per-server ceiling (250ms), wait-all returns ≈ the ceiling with the hung
+    // per-server timeout (250ms), wait-all returns ≈ the timeout with the hung
     // server CUT (fail-open). The aggregate is SETTLED → the search returns
     // the honest definitive negative, never WARMING_MESSAGE.
     const { key } = seedCache(Infinity, []);
@@ -291,15 +384,15 @@ describe('wait-all + ceiling: hung server is CUT; honest negative after settle',
     );
     const vault = new ToolVault({ embedding: { enabled: false } });
     await vault.registerProvider(provider);
-    void provider.warmUp(); // fire-and-forget — cut at 250ms ceiling
+    void provider.warmUp(); // fire-and-forget — cut at 250ms timeout
 
     // After the ceiling, the provider is settled (awaitReady(0) → true).
     await sleep(400);
     expect(await provider.awaitReady(0)).toBe(true);
     expect(vault.count).toBe(0);
 
-    // Full search path through the plugin (same 250ms ceiling): factory
-    // returns ≈ ceiling, aggregate settled → honest "No matches".
+    // Full search path through the plugin (same 250ms timeout): factory
+    // returns ≈ timeout, aggregate settled → honest "No matches".
     const hooks = await loadPluginWithSeededMcp(Infinity, 250);
     const searchTool = searchToolOf(hooks, 'tool_search');
     const out = await execSearch(searchTool, { query: 'documentation' }, 'race-sess-3');

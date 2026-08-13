@@ -80,6 +80,16 @@ export class SessionToolRegistry {
     return this.authorization.deferredCount;
   }
 
+  public getAuthorizedTools(sessionID: string | undefined): string[] {
+    return this.authorization.getAuthorizedTools(sessionID);
+  }
+
+  public revokeTools(sessionID: string | undefined, toolIDs: Iterable<string>): void {
+    if (!sessionID) return;
+    this.authorization.revoke(sessionID, toolIDs);
+    this.deliveryHistory.remove(sessionID, toolIDs);
+  }
+
   public isAuthorized(sessionID: string | undefined, canonicalID: string): boolean {
     return this.authorization.isAuthorized(sessionID, canonicalID);
   }

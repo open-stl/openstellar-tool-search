@@ -143,7 +143,9 @@ describe('MCP Resilience and Lifecycle', () => {
         {} as any,
         {
           mcp: {
-            test: { type: 'remote', url: 'http://localhost:8080' },
+            servers: {
+              test: { type: 'remote', url: 'http://localhost:8080' },
+            },
           },
         },
       );
@@ -167,7 +169,9 @@ describe('MCP Resilience and Lifecycle', () => {
         {} as any,
         {
           mcp: {
-            test: { type: 'remote', url: 'http://localhost:8080' },
+            servers: {
+              test: { type: 'remote', url: 'http://localhost:8080' },
+            },
           },
         },
       );

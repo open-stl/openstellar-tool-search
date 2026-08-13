@@ -298,6 +298,19 @@ export class DeliveryHistory {
     return { new: newHits, delivered: deliveredHits };
   }
 
+  /** Remove delivery records for specific tools in a session. */
+  remove(sessionID: string, canonicalIDs: Iterable<string>): void {
+    const session = this.history.get(sessionID);
+    if (!session) return;
+    for (const id of canonicalIDs) {
+      session.delete(id);
+    }
+    if (session.size === 0) {
+      this.history.delete(sessionID);
+    }
+    this.persistence.save(this.history);
+  }
+
   /** Clear delivery history for a session (rule 42 -- Compaction Reset). */
   clear(sessionID: string): void {
     this.history.delete(sessionID);

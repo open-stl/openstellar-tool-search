@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import type { Hooks, Plugin, PluginInput, PluginOptions } from '@opencode-ai/plugin';
+import { Schema } from 'effect';
 import { ToolSearchPlugin } from '../src/plugin.js';
 
 const FIXTURE_TOOLS = [
@@ -433,5 +434,86 @@ describe('E2E: tool.execute.before pre-execution blocking', () => {
     const beforeHook = fx.hooks['tool.execute.before']!;
     await expect(beforeHook({ tool: 'tool_search', sessionID: 'sess-e2e-exempt' } as any, {} as any)).resolves.toBeUndefined();
     await expect(beforeHook({ tool: 'tool_search_regex', sessionID: 'sess-e2e-exempt' } as any, {} as any)).resolves.toBeUndefined();
+  });
+});
+
+describe('E2E: Effect Schema parameters render as JSON Schema (no AST leak)', () => {
+  it('30. Effect-declared tool: tool_search_regex returns JSON Schema, not the raw AST', async () => {
+    const ctx = makeCtx();
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { mode: 'keyword' } as PluginOptions);
+    const defHook = hooks['tool.definition']!;
+
+    // A REAL Effect Schema instance, as opencode passes for Effect-declared tools.
+    const effectSchema = Schema.Struct({
+      query: Schema.String.annotate({ description: 'Search query text' }),
+      limit: Schema.Number,
+    });
+    const out: any = { description: 'Effect tool', parameters: effectSchema };
+    await defHook({ toolID: 'effect_tool' }, out);
+
+    const toolSearchRegex = (hooks.tool as any).tool_search_regex;
+    const result = await toolSearchRegex.execute({ pattern: '^effect_tool$' }, { ...TOOL_CTX, sessionID: 'sess-effect-30' });
+
+    expect(result).toContain('effect_tool');
+    // Model-facing JSON Schema, not the internal AST.
+    expect(result).not.toContain('~effect/Schema');
+    expect(result).not.toContain('"_tag"');
+    expect(result).not.toContain('typeParameters');
+    expect(result).toContain('parameters: {');
+    expect(result).toContain('"type":"object"');
+    expect(result).toContain('"query"');
+    expect(result).toContain('"Search query text"');
+    expect(result).toContain('https://json-schema.org/draft/2020-12/schema');
+  });
+
+  it('31. Effect-declared tool: parameter descriptions are searchable (index integration)', async () => {
+    const ctx = makeCtx();
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { mode: 'keyword' } as PluginOptions);
+    const defHook = hooks['tool.definition']!;
+
+    const effectSchema = Schema.Struct({
+      repo: Schema.String.annotate({ description: 'GitHub repository in owner/repo format' }),
+    });
+    await defHook({ toolID: 'effect_github' }, { description: 'Effect GitHub tool', parameters: effectSchema });
+
+    const toolSearch = (hooks.tool as any).tool_search;
+    const result = await toolSearch.execute({ query: 'owner/repo format' }, { ...TOOL_CTX, sessionID: 'sess-effect-31' });
+    expect(result).toContain('effect_github');
+  });
+
+  it('32. Unsupported schema falls back to omitted parameters (no crash)', async () => {
+    const ctx = makeCtx();
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { mode: 'keyword' } as PluginOptions);
+    const defHook = hooks['tool.definition']!;
+
+    // Malformed Effect-shaped object: conversion throws, must fall back to omit.
+    const broken = { ast: { _tag: 'Objects', fields: {} }, notARealSchema: true };
+    const out: any = { description: 'Broken tool', parameters: broken };
+    await defHook({ toolID: 'broken_tool' }, out);
+
+    const toolSearchRegex = (hooks.tool as any).tool_search_regex;
+    const result = await toolSearchRegex.execute({ pattern: '^broken_tool$' }, { ...TOOL_CTX, sessionID: 'sess-effect-32' });
+    expect(result).toContain('broken_tool');
+    expect(result).not.toContain('parameters:');
+    expect(result).not.toContain('~effect/Schema');
+  });
+
+  it('33. jsonSchema field preference: opencode Tool.Def.jsonSchema wins over raw parameters', async () => {
+    const ctx = makeCtx();
+    const hooks = await (ToolSearchPlugin as Plugin)(ctx, { mode: 'keyword' } as PluginOptions);
+    const defHook = hooks['tool.definition']!;
+
+    const effectSchema = Schema.Struct({ query: Schema.String });
+    const jsonSchema = { type: 'object', properties: { query: { type: 'string' } } };
+    const out: any = { description: 'JsonSchema tool', parameters: effectSchema, jsonSchema };
+    await defHook({ toolID: 'jsonschema_tool' }, out);
+
+    const toolSearchRegex = (hooks.tool as any).tool_search_regex;
+    const result = await toolSearchRegex.execute({ pattern: '^jsonschema_tool$' }, { ...TOOL_CTX, sessionID: 'sess-effect-33' });
+    expect(result).toContain('"type":"object"');
+    expect(result).toContain('"query"');
+    // The provided jsonSchema (no $schema key) is displayed as-is.
+    expect(result).not.toContain('https://json-schema.org/draft/2020-12/schema');
+    expect(result).not.toContain('~effect/Schema');
   });
 });

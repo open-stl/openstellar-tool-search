@@ -6,7 +6,7 @@ import { McpWiring, parseMcpConfig } from './hooks/mcp-wiring.js';
 import { DEFAULT_WARMUP_TIMEOUT_MS } from './mcp/mcp-tool-provider.js';
 import { toast } from './hooks/toast.js';
 
-const ALLOWED_CONFIG_KEYS = new Set(['alwaysLoad', 'maxResults', 'mode', 'resetTools', 'mcp', 'preWarmMs']);
+const ALLOWED_CONFIG_KEYS = new Set(['alwaysLoad', 'maxResults', 'mode', 'resetTools', 'mcp', 'timeout']);
 
 function validateConfig(rawOpts: Record<string, unknown>): void {
   for (const key of Object.keys(rawOpts)) {
@@ -57,8 +57,7 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     runtime.vault,
     runtime.sessionRegistry,
     runtime.searchTools,
-    deferLabel,
-    opts.preWarmMs ?? DEFAULT_WARMUP_TIMEOUT_MS,
+    opts.timeout ?? DEFAULT_WARMUP_TIMEOUT_MS,
   );
   const updateCheck = new UpdateCheckLifecycle(ctx);
 
@@ -67,7 +66,7 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     // WAIT-ALL PRE-WARM: opencode freezes the session tool-set at start
     // (~0-2s); MCP tools registered after that snapshot are permanently
     // uncallable. So the factory blocks until EVERY enabled server settles or
-    // is CUT at its per-server ceiling (preWarmMs, default 60s — a cut emits
+    // is CUT at its per-server ceiling (timeout, default 60s — a cut emits
     // console.warn). Anything that settles is first-class in the session;
     // anything cut is honestly absent (status-only placeholder retained).
     // Non-MCP loads: no call, no delay.
@@ -88,7 +87,11 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     tool: runtime.searchTools,
     'tool.definition': async (input, output) => {
       if (SEARCH_IDS.has(input.toolID)) return;
-      output.description = runtime.deferTool(input.toolID, output.description, output.parameters);
+      // opencode's runtime hook output carries `jsonSchema` (Tool.Def.jsonSchema)
+      // alongside `parameters` — prefer it when present (already model-facing
+      // JSON Schema). The typed contract omits it, so read it defensively.
+      const jsonSchema = (output as { jsonSchema?: unknown }).jsonSchema;
+      output.description = runtime.deferTool(input.toolID, output.description, output.parameters, jsonSchema);
     },
     'tool.execute.before': async (input) => {
       if (SEARCH_IDS.has(input.tool)) return;
@@ -103,7 +106,18 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
         return;
       }
     },
-    'experimental.chat.system.transform': async (_input, output) => {
+    'experimental.chat.messages.transform': async (_input, output) => {
+      const msgs = output?.messages;
+      if (Array.isArray(msgs) && msgs.length > 0) {
+        // Extract sessionID from messages if available
+        const firstMsg = msgs[0];
+        const sessionID = (firstMsg?.info as { sessionID?: string } | undefined)?.sessionID;
+        runtime.syncSleevCompression(sessionID, msgs);
+      }
+    },
+    'experimental.chat.system.transform': async (input, output) => {
+      const inputTyped = input as { sessionID?: string; messages?: Array<{ role?: string; content?: unknown }> };
+      runtime.syncSleevCompression(inputTyped.sessionID, inputTyped.messages);
       const state = runtime.prepareForSystemTransform();
       if (state.policyText) {
         output.system.push(state.policyText);

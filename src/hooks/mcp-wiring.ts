@@ -3,7 +3,6 @@ import type { ToolVault } from '../vault.js';
 import type { SessionToolRegistry } from '../session-tool-registry.js';
 import { McpToolProvider, isServerEnabled } from '../mcp/mcp-tool-provider.js';
 import type { McpServerConfig } from '../mcp/types.js';
-import { truncateDescription } from './deferral.js';
 
 /**
  * Description for a warming-up server's placeholder tool. Echoes the
@@ -35,14 +34,16 @@ const SERVER_FAILED_DESC = (name: string) =>
  *
  * Owns the single McpToolProvider instance, the process-exit cleanup
  * listeners, provider registration into the vault, and the executable-tool
- * bridge (which surfaces provider tools as OpenCode tools, deferring their
- * descriptions like static tools). Repeated initialization attempts are
- * idempotent — one provider per plugin instance.
+ * bridge (which surfaces provider tools as OpenCode tools with their FULL
+ * descriptions — deferral/truncation is the tool.definition hook's job, so
+ * the catalog keeps the original description and tool_search returns it
+ * intact). Repeated initialization attempts are idempotent — one provider
+ * per plugin instance.
  *
  * WAIT-ALL PRE-WARM: opencode freezes the session tool-set at start (~0-2s),
  * so MCP tools must be in the bridge BEFORE the factory returns. `preWarm()`
  * awaits provider warm-up — every enabled server settles or is CUT at its
- * per-server ceiling (preWarmMs) — then finalizes placeholders. Placeholders
+ * per-server timeout — then finalizes placeholders. Placeholders
  * are STATUS-ONLY (no forwarding): a placeholder's execute() reports ready /
  * still-starting / failed, never proxies to the MCP server.
  */
@@ -56,8 +57,7 @@ export class McpWiring {
     private readonly vault: ToolVault,
     private readonly sessionRegistry: SessionToolRegistry,
     private readonly tools: Record<string, ReturnType<typeof tool>>,
-    private readonly deferLabel: string,
-    private readonly preWarmMs: number,
+    private readonly timeout: number,
   ) {}
 
   public get isInitialized(): boolean {
@@ -66,10 +66,10 @@ export class McpWiring {
 
   public init(mcpConfig: Record<string, McpServerConfig> | McpServerConfig[]): void {
     if (this.provider) return;
-    // preWarmMs is the PER-SERVER CEILING: each server must settle within it
+    // timeout is the PER-SERVER CEILING: each server must settle within it
     // or is cut (fail-open + console.warn). Wait-all means the factory returns
     // only after every server settled or was cut.
-    const mcpProvider = new McpToolProvider(mcpConfig, undefined, undefined, this.preWarmMs);
+    const mcpProvider = new McpToolProvider(mcpConfig, undefined, undefined, this.timeout);
     // Registration is synchronous (the provider has no tools until warm-up
     // completes), so startup never awaits the MCP handshake.
     void this.vault.registerProvider(mcpProvider);
@@ -177,9 +177,17 @@ export class McpWiring {
    * Surface provider tools into the session registry and the executable-tool
    * bridge. Shared by the per-server onUpdate handler and the post-warm-up
    * final write (the return value of warmUp() still carries the full list).
-   * Deferred tools get their description truncated + the deferral label;
-   * non-deferred (`deferred === false`) tools are always-on. Writes are
-   * idempotent, so repeated invocations for the same tool are safe.
+   *
+   * Description OWNERSHIP: the bridge carries the ORIGINAL FULL description —
+   * never a truncated one. OpenCode's `tool.definition` hook (plugin.ts) is
+   * the single truncation point: it stores the full description in the
+   * catalog (so tool_search returns it intact) and rewrites the OpenCode-
+   * facing description to first sentence + deferral label. Pre-truncating
+   * here would leak `[deferred]` into the catalog via that hook (the hook
+   * re-fires with the already-truncated description and overwrites the stored
+   * full one). Non-deferred (`deferred === false`) tools are always-on and
+   * keep the full description end-to-end. Writes are idempotent, so repeated
+   * invocations for the same tool are safe.
    */
   private handleProviderUpdate(providerTools: import('../tool-provider.js').ToolDefinition[]): void {
     this.sessionRegistry.registerProviderTools(providerTools);
@@ -188,9 +196,6 @@ export class McpWiring {
     for (const pt of providerTools) {
       const execTool = execs[pt.id];
       if (!execTool) continue;
-      if (pt.deferred !== false) {
-        execTool.description = truncateDescription(pt.description, this.deferLabel);
-      }
       this.tools[pt.id] = execTool;
     }
   }
@@ -206,10 +211,10 @@ export class McpWiring {
   }
 
   /**
-   * Wait for ALL enabled servers to settle (per-server ceiling = preWarmMs,
+   * Wait for ALL enabled servers to settle (per-server timeout,
    * applied inside the provider), then finalize placeholders. No short factory
    * budget — the factory returns only after every server settled or was cut at
-   * its ceiling. Memoized — multiple callers (factory + config hook) share ONE
+   * its timeout. Memoized — multiple callers (factory + config hook) share ONE
    * settle promise. Warm-up errors fail open (swallowed).
    */
   public preWarm(): Promise<void> {
@@ -233,14 +238,37 @@ export class McpWiring {
 }
 
 /**
- * Normalize a raw `mcp` option (or config-hook value) into a server config:
- * accepts the V2 `{ servers: {...} }` wrapper or a bare server map, and
- * rejects non-object values — including arrays, which are explicitly refused
- * (the V1 array shape is not supported).
+ * Parse a raw `mcp` option (or config-hook value) into a server config map.
+ *
+ * Accepts ONLY the OpenCode v2 shape — `{ servers: { "<name>": {...} } }` —
+ * matching opencode's native `mcp.servers` convention. Anything else is
+ * rejected and returns `undefined`:
+ *   - a BARE server map (`{ "my-server": {...} }`, the legacy v1/v2-mixed
+ *     shape) is REJECTED with an explicit console.warn — this plugin follows
+ *     opencode v2's `mcp.servers` wrapper and never silently unwraps legacy
+ *     config;
+ *   - arrays (the V1 array shape) are refused;
+ *   - `null`, primitives, `{ servers: [...] }`, or a missing wrapper return
+ *     `undefined` without a warning (ordinary invalid input, not a legacy
+ *     migration case).
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function parseMcpConfig(raw: any): Record<string, McpServerConfig> | McpServerConfig[] | undefined {
-  const servers = raw?.servers ?? raw;
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+
+  // A bare map has at least one server key but no `servers` wrapper — this is
+  // the legacy shape. Reject it explicitly (do NOT unwrap) so users migrate
+  // to v2. An empty object `{}` is ordinary invalid input, not a legacy map:
+  // no warning.
+  if (!('servers' in raw) && Object.keys(raw).length > 0) {
+    console.warn(
+      '[ToolSearchPlugin] Legacy bare-map MCP config is REJECTED: `mcp: { "<server>": {...} }` is no longer accepted. ' +
+        'This plugin follows OpenCode v2\'s `mcp.servers` convention — use `mcp: { servers: { "<server>": {...} } }`.',
+    );
+    return undefined;
+  }
+
+  const servers = raw.servers;
   if (servers && typeof servers === 'object' && !Array.isArray(servers)) {
     return servers as Record<string, McpServerConfig>;
   }

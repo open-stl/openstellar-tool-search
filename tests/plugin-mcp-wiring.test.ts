@@ -26,11 +26,13 @@ vi.mock('../src/mcp/mcp-tool-provider.js', async (importOriginal) => {
 });
 
 describe('Plugin MCP Wiring & Background Warm-up', () => {
-  it('instantiates McpToolProvider when mcp option is provided', async () => {
+  it('instantiates McpToolProvider when mcp option is provided (v2 wrapper)', async () => {
     const mockCtx = {} as PluginInput;
     const hooks = await ToolSearchPlugin.server(mockCtx, {
       mcp: {
-        notion: { type: 'remote', url: 'http://localhost:8080' },
+        servers: {
+          notion: { type: 'remote', url: 'http://localhost:8080' },
+        },
       },
     });
 
@@ -52,9 +54,33 @@ describe('parseMcpConfig rejects invalid mcp shapes', () => {
     ).toBeUndefined();
   });
 
-  it('accepts a bare server map', () => {
-    const map = { srv: { type: 'remote', url: 'http://localhost:8080' } };
-    expect(parseMcpConfig(map)).toBe(map);
+  it('REJECTS a bare server map (legacy shape) with a warning', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const map = { srv: { type: 'remote', url: 'http://localhost:8080' } };
+      expect(parseMcpConfig(map)).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const message = warnSpy.mock.calls[0][0] as string;
+      expect(message).toContain('Legacy bare-map MCP config is REJECTED');
+      expect(message).toContain('mcp.servers');
+      expect(message).toContain('OpenCode v2');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('rejects null, primitives, and missing wrapper without a warning', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(parseMcpConfig(null)).toBeUndefined();
+      expect(parseMcpConfig(undefined)).toBeUndefined();
+      expect(parseMcpConfig('nope')).toBeUndefined();
+      expect(parseMcpConfig(42)).toBeUndefined();
+      expect(parseMcpConfig({})).toBeUndefined();
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('accepts the V2 { servers: {...} } wrapper', () => {

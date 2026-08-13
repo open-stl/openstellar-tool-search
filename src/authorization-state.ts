@@ -144,6 +144,36 @@ export class AuthorizationState {
       });
   }
 
+  public getAuthorizedTools(sessionID: string | undefined): string[] {
+    if (!sessionID) return [];
+    const authorized = this.authorizations.get(sessionID);
+    if (!authorized) return [];
+    const ids: string[] = [];
+    for (const value of authorized) {
+      const id = canonicalIdOf(value);
+      if (id) ids.push(id);
+    }
+    return ids;
+  }
+
+  public revoke(sessionID: string | undefined, toolIDs: Iterable<string>): void {
+    if (!sessionID) return;
+    const authorized = this.authorizations.get(sessionID);
+    if (!authorized) return;
+    const toRemove = new Set(toolIDs);
+    for (const value of Array.from(authorized)) {
+      const id = canonicalIdOf(value);
+      if (id && toRemove.has(id)) {
+        authorized.delete(value);
+      }
+    }
+    if (authorized.size === 0) {
+      this.authorizations.delete(sessionID);
+      this.persistence.deleteSession(sessionID);
+    }
+    this.persistence.save(this.authorizations, this.lastSeen);
+  }
+
   public resetIfConfigured(toolID: string, sessionID: string | undefined): boolean {
     if (!this.resetTools.has(toolID)) return false;
     this.resetSession(sessionID);
