@@ -7,11 +7,10 @@ import { ToolVault } from '../src/catalog/vault.js';
 import { AuthPersistence } from '../src/engine/auth-persistence.js';
 import type { PersistedToolAuthorization } from '../src/engine/auth-persistence.js';
 
-// Track SemanticMatcher instantiation for Bug 6 test.
+// Track SemanticMatcher instantiation
 let matcherInstantiated = false;
 
-// Mock the embedding module so we can detect when SemanticMatcher is created
-// (and avoid loading real transformer models during tests).
+// Mock the embedding module to avoid loading real transformer models during tests.
 vi.mock('../src/catalog/matcher.js', () => ({
   SemanticMatcher: class {
     constructor() {
@@ -41,35 +40,13 @@ describe('ToolSearchPlugin', () => {
 
   it('exports a plugin function', () => {
     expect(typeof ToolSearchPlugin).toBe('function');
+    expect(ToolSearchPlugin.id).toBe('openstellar-tool-search');
   });
 
-
-  // =========================================================================
-  // RED Test 1 — Bug 1: JSON.stringify strips Zod-like schema data
-  // =========================================================================
-  //
-  // The current code does:
-  //   vault.add(id, description,
-  //     output.parameters ? JSON.parse(JSON.stringify(output.parameters))
-  //                       : output.parameters
-  //   );
-  //
-  // JSON.stringify on a Zod schema returns "{}", losing all parameter data.
-  // The CORRECT fix is to pass output.parameters directly.
-  //
-  // This test creates a mock Zod-like object whose internal data is stored in
-  // non-enumerable properties (like real Zod schemas). JSON.stringify silently
-  // drops those properties. The test asserts that the vault stores the *same
-  // reference* as the original object — a guarantee that cloning is skipped.
-  // On current code this fails because JSON.parse(JSON.stringify(…)) produces
-  // a new empty object, not the original.
-  // =========================================================================
-  it('stores raw parameters without JSON cloning (Bug 1 - RED)', async () => {
+  it('stores raw parameters without JSON cloning', async () => {
     const addSpy = vi.spyOn(ToolVault.prototype, 'add');
     const hooks = await ToolSearchPlugin({} as any, { alwaysLoad: ['test_tool1'] });
 
-    // Simulate a Zod-object-like schema whose shape data lives in
-    // non-enumerable properties — JSON.stringify silently drops them.
     const zodLikeParams: Record<string, unknown> = {};
     Object.defineProperties(zodLikeParams, {
       type: { value: 'object', enumerable: true },
@@ -77,7 +54,7 @@ describe('ToolSearchPlugin', () => {
         value: () => ({
           name: { type: 'string', description: 'User name parameter' },
         }),
-        enumerable: false, // Non-enumerable — like Zod's internal shape
+        enumerable: false,
       },
       _def: {
         value: { typeName: 'ZodObject' },
@@ -90,38 +67,12 @@ describe('ToolSearchPlugin', () => {
       { description: 'A test tool', parameters: zodLikeParams },
     );
 
-    // CORRECT behavior: the vault should store a reference to the original
-    // parameter object, NOT a JSON-roundtripped clone.
-    // CURRENT BUG: JSON.parse(JSON.stringify(…)) creates a different reference
-    // and loses all non-enumerable / Symbol-keyed data.
     expect(addSpy.mock.calls[0][2]).toBe(zodLikeParams);
   });
 
-  // =========================================================================
-  // RED Test 2 — Bug 2: stripDescriptions mutates the original schema
-  // =========================================================================
-  //
-  // The current code calls stripDescriptions(output.parameters, deferLabel)
-  // which does:
-  //   if ('description' in obj && …) { obj.description = label; }
-  //
-  // This overwrites .description on the original schema object.  Zod stores
-  // descriptions internally (not as plain writable properties), so this
-  // mutation is both ineffective on real Zod schemas AND destructive to any
-  // object that uses a getter or computed description property.
-  //
-  // The CORRECT fix is to remove the stripDescriptions call entirely.
-  //
-  // This test creates a schema with a getter-based .description (simulating
-  // Zod's internal description storage).  After the hook runs, the getter
-  // should still be intact.  On current code it fails because
-  // stripDescriptions replaces the getter with the literal string '[d]'.
-  // =========================================================================
-  it('does not mutate original schema description getter (Bug 2 - RED)', async () => {
+  it('does not mutate original schema description getter', async () => {
     const hooks = await ToolSearchPlugin({} as any, {} as any);
 
-    // Simulate a Zod schema where description is a getter (Zod stores
-    // descriptions internally, not as a plain writable own property).
     const descriptionValue = 'Original parameter description';
     const params: Record<string, unknown> = {};
     Object.defineProperty(params, 'description', {
@@ -132,41 +83,44 @@ describe('ToolSearchPlugin', () => {
       configurable: true,
     });
 
-    // toolID NOT in alwaysOn → stripDescriptions WILL be called
     await hooks['tool.definition']!(
       { toolID: 'test_bug2' },
       { description: 'A test tool', parameters: params },
     );
 
-    // CORRECT behaviour: the original schema object should NOT be mutated.
-    // CURRENT BUG: stripDescriptions replaces the getter wit hthe string '[d]'.
     expect(Object.getOwnPropertyDescriptor(params, 'description')?.get).toBeDefined();
   });
 
-  // =========================================================================
-  // Bug 6: embedding defaults to enabled
-  // =========================================================================
-  //
-  // The current code does:
-  //   embedding: opts.embedding ?? { enabled: true }
-  //
-  // Embedding is enabled by default because BM25 cannot handle multilingual
-  // queries (Thai, Japanese, etc.) — the tokenizer strips non-ASCII chars.
-  // Semantic search via @xenova/transformers allows intent matching across
-  // languages. Disable with { mode: 'keyword' } in options.
-  // =========================================================================
+  it('truncates descriptions to first sentence and appends [deferred] tag on tool.definition', async () => {
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
+    const output = {
+      description: 'First sentence of description. Second sentence that should be trimmed.',
+      parameters: { type: 'object' },
+    };
+    await hooks['tool.definition']!({ toolID: 'tool_trunc' }, output);
+
+    expect(output.description).toContain('[deferred]');
+    expect(output.description).toContain('First sentence of description.');
+    expect(output.description).not.toContain('Second sentence that should be trimmed.');
+  });
+
   it('defaults to embedding enabled when no options provided', async () => {
-    matcherInstantiated = false; // Reset from any prior test
-
-    // Call plugin with NO embedding-related options
+    matcherInstantiated = false;
     await ToolSearchPlugin({} as any, {} as any);
-
-    // SemanticMatcher should be created by default.
     expect(matcherInstantiated).toBe(true);
   });
 
-
-
+  it('registers tool_search and tool_search_regex in tool hook with disambiguated descriptions', async () => {
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
+    expect(hooks.tool).toBeDefined();
+    const tools = hooks.tool as Record<string, any>;
+    expect(tools.tool_search).toBeDefined();
+    expect(tools.tool_search_regex).toBeDefined();
+    expect(tools.tool_search.description).toContain('capability, or semantic intent');
+    expect(tools.tool_search.description).toContain('DO NOT pass space-separated lists');
+    expect(tools.tool_search_regex.description).toContain('regex alternation');
+    expect(tools.tool_search_regex.description).toContain('known tool ID(s)');
+  });
 
   it('persists structured _ide authorization through a real serialized restart', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'tool-search-auth-'));
@@ -182,10 +136,10 @@ describe('ToolSearchPlugin', () => {
       const second = await ToolSearchPlugin({} as any, { mode: 'keyword' });
       await second['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
       await second['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
-    await expect(
-      second['tool.execute.before']!({ tool: 'foo_ide', sessionID: 'disk-session' } as any, {} as any)
-    ).resolves.not.toThrow();
-    const output = { output: 'Real result' };
+      await expect(
+        second['tool.execute.before']!({ tool: 'foo_ide', sessionID: 'disk-session' } as any, {} as any)
+      ).resolves.not.toThrow();
+      const output = { output: 'Real result' };
       await second['tool.execute.after']!({ tool: 'foo_ide', sessionID: 'disk-session', callID: 'disk' } as any, output as any);
       expect(output.output).toBe('Real result');
     } finally {
@@ -233,8 +187,6 @@ describe('ToolSearchPlugin', () => {
         const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
         await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
         await hooks['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
-        // F11 fix: legacy _ide and @canonical: strings are migrated, not purged
-        // So the tool should be authorized after migration
         await expect(
           hooks['tool.execute.before']!({ tool: 'foo_ide', sessionID: 'legacy-session' } as any, {} as any)
         ).resolves.not.toThrow();
@@ -280,13 +232,12 @@ describe('ToolSearchPlugin', () => {
     const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
     await hooks['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
-    // F11 fix: legacy _ide string is migrated to canonical object, not purged
     await expect(
       hooks['tool.execute.before']!({ tool: 'foo_ide', sessionID: 'legacy-session' } as any, {} as any)
     ).resolves.not.toThrow();
   });
 
-  it('documents precise canonical tool policy guidance', async () => {
+  it('documents precise canonical tool policy guidance with batch regex alternation', async () => {
     const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'policy_tool' }, { description: 'Policy tool', parameters: {} });
     const output = { system: [] as string[] };
@@ -294,9 +245,20 @@ describe('ToolSearchPlugin', () => {
     const text = output.system.join('\n');
     expect(text).toContain('canonical ID');
     expect(text).not.toContain('alias');
-    // When the tool ID is already known, AI should use tool_search_regex for a reliable exact match.
     expect(text).toContain('tool_search_regex');
     expect(text).toMatch(/known.*tool.*ID|tool.*ID.*known/i);
+    expect(text).toContain('regex alternation');
+    expect(text).toContain('^(toolA|toolB|toolC)$');
+  });
+
+  it('rejects unsearched deferred tools with strict tool_search_regex prescription without or tool_search dilution', async () => {
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
+    await hooks['tool.definition']!({ toolID: 'unsearched_tool' }, { description: 'Deferred unsearched tool', parameters: {} });
+    await expect(
+      hooks['tool.execute.before']!({ tool: 'unsearched_tool', sessionID: 'strict-error-session' } as any, {} as any)
+    ).rejects.toThrow(
+      '[Tool Search Required] Tool "unsearched_tool" has not been searched in session "strict-error-session". Call tool_search_regex({ pattern: "^unsearched_tool$" }) to inspect full description and parameter schema before calling this tool.'
+    );
   });
 
   it('does not authorize a real tool after searching another canonical tool', async () => {
@@ -330,7 +292,7 @@ describe('ToolSearchPlugin', () => {
       await hooks['tool.execute.after']!({ tool: 'skill', sessionID, callID: 'c1' } as any, out1 as any);
       expect(out1.output).toBe('Skill result 1');
 
-      // 3. Intervening unauthorized tool execution should throw [Tool Search Required] in tool.execute.before, and does NOT clear skill authorization
+      // 3. Intervening unauthorized tool execution should throw [Tool Search Required]
       await expect(
         hooks['tool.execute.before']!({ tool: 'ordinary_tool', sessionID } as any, {} as any)
       ).rejects.toThrow('[Tool Search Required]');
@@ -346,13 +308,12 @@ describe('ToolSearchPlugin', () => {
       // 5. Authorization resets on compress
       await hooks['tool.execute.after']!({ tool: 'compress', sessionID, callID: 'c4' } as any, { output: 'compressed' } as any);
 
-      // 6. After compress reset, skill requires search again (throws [Tool Search Required])
+      // 6. After compress reset, skill requires search again
       await expect(
         hooks['tool.execute.before']!({ tool: 'skill', sessionID } as any, {} as any)
       ).rejects.toThrow('[Tool Search Required]');
     });
   });
-
 
   it('blocks unauthorized deferred tool execution and resolves after authorization', async () => {
     const hooks = await ToolSearchPlugin({} as any);
@@ -409,11 +370,9 @@ describe('ToolSearchPlugin', () => {
         { description: 'Commit staged changes', parameters: {} },
       );
 
-      // Authorize git_commit in session A
       const regexTool = (hooks.tool as any).tool_search_regex;
       await regexTool.execute({ pattern: '^git_commit$' }, { sessionID: 'sess_default_a' });
 
-      // Before reset: git_commit executed in sess_default_a resolves without throwing
       await expect(
         hooks['tool.execute.before']!({ tool: 'git_commit', sessionID: 'sess_default_a' } as any, {} as any)
       ).resolves.not.toThrow();
@@ -421,13 +380,10 @@ describe('ToolSearchPlugin', () => {
       await hooks['tool.execute.after']!({ tool: 'git_commit', sessionID: 'sess_default_a', callID: 'c1' } as any, beforeGit as any);
       expect(beforeGit.output).toBe('Commit successful');
 
-      // Execute default compress tool in sess_default_a
       const compressOut = { output: 'Compaction finished' };
       await hooks['tool.execute.after']!({ tool: 'compress', sessionID: 'sess_default_a', callID: 'c2' } as any, compressOut as any);
-       // Compress preserves its result and appends a deterministic model-visible reset notice.
-       expect(compressOut.output).toBe('Compaction finished\n\n[Tool Search] Deferred tool authorizations have been reset — search for any tools you need to use.');
+      expect(compressOut.output).toBe('Compaction finished\n\n[Tool Search] Deferred tool authorizations have been reset — search for any tools you need to use.');
 
-      // After reset: git_commit throws [Tool Search Required] in tool.execute.before
       await expect(
         hooks['tool.execute.before']!({ tool: 'git_commit', sessionID: 'sess_default_a' } as any, {} as any)
       ).rejects.toThrow('[Tool Search Required]');
@@ -449,21 +405,17 @@ describe('ToolSearchPlugin', () => {
       );
 
       const regexTool = (hooks.tool as any).tool_search_regex;
-      // Authorize git_commit in session A and session B
       await regexTool.execute({ pattern: '^git_commit$' }, { sessionID: 'sess_custom_a' });
       await regexTool.execute({ pattern: '^git_commit$' }, { sessionID: 'sess_custom_b' });
 
-      // Executing custom_compaction in session A should produce reset notice
       const customResetOut = { output: 'Custom compaction done' };
       await hooks['tool.execute.after']!({ tool: 'custom_compaction', sessionID: 'sess_custom_a', callID: 'c1' } as any, customResetOut as any);
       expect(customResetOut.output).toBe('Custom compaction done\n\n[Tool Search] Deferred tool authorizations have been reset — search for any tools you need to use.');
 
-      // Session A's git_commit should now throw [Tool Search Required] in tool.execute.before
       await expect(
         hooks['tool.execute.before']!({ tool: 'git_commit', sessionID: 'sess_custom_a' } as any, {} as any)
       ).rejects.toThrow('[Tool Search Required]');
 
-      // Session B's git_commit remains authorized (session isolation)
       await expect(
         hooks['tool.execute.before']!({ tool: 'git_commit', sessionID: 'sess_custom_b' } as any, {} as any)
       ).resolves.not.toThrow();
@@ -471,12 +423,10 @@ describe('ToolSearchPlugin', () => {
       await hooks['tool.execute.after']!({ tool: 'git_commit', sessionID: 'sess_custom_b', callID: 'c3' } as any, afterGitB as any);
       expect(afterGitB.output).toBe('Commit done');
 
-      // Additive check: default compress still works as reset tool in session B
       const compressOutB = { output: 'Compressed session B' };
       await hooks['tool.execute.after']!({ tool: 'compress', sessionID: 'sess_custom_b', callID: 'c4' } as any, compressOutB as any);
       expect(compressOutB.output).toBe('Compressed session B\n\n[Tool Search] Deferred tool authorizations have been reset — search for any tools you need to use.');
 
-      // Session B git_commit throws [Tool Search Required] after compress reset
       await expect(
         hooks['tool.execute.before']!({ tool: 'git_commit', sessionID: 'sess_custom_b' } as any, {} as any)
       ).rejects.toThrow('[Tool Search Required]');
@@ -500,7 +450,6 @@ describe('ToolSearchPlugin', () => {
       const regexTool = (hooks.tool as any).tool_search_regex;
       await regexTool.execute({ pattern: '^(git_commit|read_file)$' }, { sessionID: 'sess_non_reset' });
 
-      // Execute non-reset tool git_commit
       await expect(
         hooks['tool.execute.before']!({ tool: 'git_commit', sessionID: 'sess_non_reset' } as any, {} as any)
       ).resolves.not.toThrow();
@@ -508,7 +457,6 @@ describe('ToolSearchPlugin', () => {
       await hooks['tool.execute.after']!({ tool: 'git_commit', sessionID: 'sess_non_reset', callID: 'c1' } as any, gitOut as any);
       expect(gitOut.output).toBe('Committed');
 
-      // read_file should remain authorized
       await expect(
         hooks['tool.execute.before']!({ tool: 'read_file', sessionID: 'sess_non_reset' } as any, {} as any)
       ).resolves.not.toThrow();
@@ -520,18 +468,15 @@ describe('ToolSearchPlugin', () => {
 
   it('resolves _ide cloaked tool via search and allows execution', async () => {
     const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
-    // Register bash (original ID, as tool.definition fires with original)
     await hooks['tool.definition']!({ toolID: 'bash' }, { description: 'Execute bash command', parameters: {} });
 
     const sessionID = 'cloak-test-1';
     const regexTool = (hooks.tool as any).tool_search_regex;
 
-    // Agent searches for bash_ide (cloaked name) — should find bash
     const result = await regexTool.execute({ pattern: '^bash_ide$' }, { sessionID });
     expect(result).toContain('bash');
     expect(result).toContain('Found 1 tool');
 
-    // Executing bash_ide should be allowed (bash is now authorized)
     await expect(
       hooks['tool.execute.before']!({ tool: 'bash_ide', sessionID } as any, {} as any)
     ).resolves.not.toThrow();
@@ -545,10 +490,8 @@ describe('ToolSearchPlugin', () => {
     const sessionID = 'cloak-isolation-1';
     const regexTool = (hooks.tool as any).tool_search_regex;
 
-    // Authorize only bash
     await regexTool.execute({ pattern: '^bash_ide$' }, { sessionID });
 
-    // read_ide should NOT be authorized
     await expect(
       hooks['tool.execute.before']!({ tool: 'read_ide', sessionID } as any, {} as any)
     ).rejects.toThrow('[Tool Search Required]');
@@ -556,31 +499,24 @@ describe('ToolSearchPlugin', () => {
 
   it('real _ide canonical tool is not confused with cloaked alias', async () => {
     const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
-    // Register both foo (canonical) and foo_ide (real separate tool)
     await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
     await hooks['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo_ide tool', parameters: {} });
 
     const sessionID = 'real-ide-canon-1';
     const regexTool = (hooks.tool as any).tool_search_regex;
 
-    // Search and authorize foo_ide explicitly
     await regexTool.execute({ pattern: '^foo_ide$' }, { sessionID });
 
-    // foo_ide executes fine (authorized directly)
     await expect(
       hooks['tool.execute.before']!({ tool: 'foo_ide', sessionID } as any, {} as any)
     ).resolves.not.toThrow();
 
-    // foo is NOT authorized (only foo_ide was searched)
     await expect(
       hooks['tool.execute.before']!({ tool: 'foo', sessionID } as any, {} as any)
     ).rejects.toThrow('[Tool Search Required]');
   });
 
   it('F2 regression: foo_ide is not falsely exempted when foo is alwaysOn', async () => {
-    // foo is alwaysOn (via alwaysLoad), but foo_ide is a separate deferred tool.
-    // Before the F2 fix, baseID stripping would check alwaysOn.has('foo') and
-    // falsely exempt foo_ide from the reminder gate.
     const hooks = await ToolSearchPlugin({} as any, {
       mode: 'keyword',
       alwaysLoad: ['foo'],
@@ -590,12 +526,10 @@ describe('ToolSearchPlugin', () => {
 
     const sessionID = 'f2-regression-session';
 
-    // foo_ide should still require a reminder (it is NOT alwaysOn)
     await expect(
       hooks['tool.execute.before']!({ tool: 'foo_ide', sessionID } as any, {} as any)
     ).rejects.toThrow('[Tool Search Required]');
 
-    // After searching foo_ide, it should be authorized
     const regexTool = (hooks.tool as any).tool_search_regex;
     await regexTool.execute({ pattern: '^foo_ide$' }, { sessionID });
 
@@ -610,12 +544,10 @@ describe('ToolSearchPlugin', () => {
 
     const sessionID = 'double-cloak-session';
 
-    // Attempting to execute bash_ide_ide without authorizing bash must throw [Tool Search Required]
     await expect(
       hooks['tool.execute.before']!({ tool: 'bash_ide_ide', sessionID } as any, {} as any)
     ).rejects.toThrow('[Tool Search Required]');
 
-    // Once bash is searched and authorized, bash_ide_ide execution should succeed
     const regexTool = (hooks.tool as any).tool_search_regex;
     await regexTool.execute({ pattern: '^bash$' }, { sessionID });
 
@@ -632,11 +564,9 @@ describe('ToolSearchPlugin', () => {
     const sessionID = 'wildcard-test-session';
     const regexTool = (hooks.tool as any).tool_search_regex;
 
-    // Searching pattern '_ide' when no tool matches should return no matches and not authorize read or write
     const result = await regexTool.execute({ pattern: '_ide' }, { sessionID });
     expect(result).toContain('No tools matched pattern "_ide"');
 
-    // read and write must remain unauthorized
     await expect(
       hooks['tool.execute.before']!({ tool: 'read', sessionID } as any, {} as any)
     ).rejects.toThrow('[Tool Search Required]');
@@ -645,10 +575,7 @@ describe('ToolSearchPlugin', () => {
     ).rejects.toThrow('[Tool Search Required]');
   });
 
-  // =========================================================================
   // Delivery history and no-op discovery tests
-  // =========================================================================
-
   it('returns No-Op Discovery response when all results are delivered and authorized (rule 36)', async () => {
     const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
@@ -657,13 +584,11 @@ describe('ToolSearchPlugin', () => {
     const sessionID = 'noop-session';
     const searchTool = (hooks.tool as any).tool_search_regex;
 
-    // First search: delivers both tools
     const firstResult = await searchTool.execute({ pattern: '^foo$|^bar$' }, { sessionID });
     expect(firstResult).toContain('Found 2 tool(s)');
     expect(firstResult).toContain('foo');
     expect(firstResult).toContain('bar');
 
-    // Second search: same query -> No-Op Discovery (rule 36)
     const secondResult = await searchTool.execute({ pattern: '^foo$|^bar$' }, { sessionID });
     expect(secondResult).toContain('No new tools discovered');
     expect(secondResult).toContain('foo');
@@ -677,24 +602,18 @@ describe('ToolSearchPlugin', () => {
     const sessionID = 'reauth-session';
     const searchTool = (hooks.tool as any).tool_search_regex;
 
-    // First search: delivers foo
     const firstResult = await searchTool.execute({ pattern: '^foo$' }, { sessionID });
     expect(firstResult).toContain('Found 1 tool(s)');
 
-    // Second search: No-Op because already delivered and authorized
     const secondResult = await searchTool.execute({ pattern: '^foo$' }, { sessionID });
     expect(secondResult).toContain('No new tools discovered');
 
-    // Reset authorization (simulating compress)
     await hooks['tool.execute.after']!({ tool: 'compress', sessionID, callID: 'c1' } as any, { output: 'compressed' } as any);
 
-    // Third search: foo was delivered but authorization was reset
-    // Should return foo again to restore authorization (rule 41)
     const thirdResult = await searchTool.execute({ pattern: '^foo$' }, { sessionID });
     expect(thirdResult).toContain('Found 1 tool(s)');
     expect(thirdResult).toContain('foo');
 
-    // foo should be authorized again
     await expect(
       hooks['tool.execute.before']!({ tool: 'foo', sessionID } as any, {} as any)
     ).resolves.not.toThrow();
@@ -709,13 +628,11 @@ describe('ToolSearchPlugin', () => {
     const sessionID = 'limit-session';
     const searchTool = (hooks.tool as any).tool_search_regex;
 
-    // First search with limit=2: delivers foo and bar (first 2 of 3)
     const firstResult = await searchTool.execute({ pattern: '^foo$|^bar$|^baz$' }, { sessionID });
     expect(firstResult).toContain('Found 2 tool(s)');
     expect(firstResult).toContain('foo');
     expect(firstResult).toContain('bar');
 
-    // Second search: foo and bar are delivered, baz is new -> returns baz only
     const secondResult = await searchTool.execute({ pattern: '^foo$|^bar$|^baz$' }, { sessionID });
     expect(secondResult).toContain('Found 1 tool(s)');
     expect(secondResult).toContain('baz');
@@ -730,11 +647,9 @@ describe('ToolSearchPlugin', () => {
     const sessionID = 'nomatch-session';
     const searchTool = (hooks.tool as any).tool_search_regex;
 
-    // No-match search
     const noMatchResult = await searchTool.execute({ pattern: '^nonexistent$' }, { sessionID });
     expect(noMatchResult).toContain('No tools matched');
 
-    // foo should still be discoverable (not affected by no-match)
     const searchResult = await searchTool.execute({ pattern: '^foo$' }, { sessionID });
     expect(searchResult).toContain('Found 1 tool(s)');
     expect(searchResult).toContain('foo');
@@ -747,18 +662,14 @@ describe('ToolSearchPlugin', () => {
     const sessionID = 'compact-session';
     const searchTool = (hooks.tool as any).tool_search_regex;
 
-    // First search: delivers foo
     const firstResult = await searchTool.execute({ pattern: '^foo$' }, { sessionID });
     expect(firstResult).toContain('Found 1 tool(s)');
 
-    // Second search: No-Op (already delivered)
     const secondResult = await searchTool.execute({ pattern: '^foo$' }, { sessionID });
     expect(secondResult).toContain('No new tools discovered');
 
-    // Compaction clears both authorization and delivery history
     await hooks['tool.execute.after']!({ tool: 'compress', sessionID, callID: 'c1' } as any, { output: 'compressed' } as any);
 
-    // Third search: foo is new again (delivery history cleared)
     const thirdResult = await searchTool.execute({ pattern: '^foo$' }, { sessionID });
     expect(thirdResult).toContain('Found 1 tool(s)');
     expect(thirdResult).toContain('foo');
@@ -771,17 +682,14 @@ describe('ToolSearchPlugin', () => {
     const sessionID = 'ts-session';
     const searchTool = (hooks.tool as any).tool_search;
 
-    // First search via tool_search
     const firstResult = await searchTool.execute({ query: 'Canonical' }, { sessionID });
     expect(firstResult).toContain('Found 1 tool(s)');
 
-    // Second search via tool_search: foo already delivered -> No-Op
     const secondResult = await searchTool.execute({ query: 'Canonical' }, { sessionID });
     expect(secondResult).toContain('No new tools discovered');
   });
 
   it('F5: re-auth path limits results to maxResults when many tools lose auth simultaneously', async () => {
-    // Register 5 tools with maxResults: 3
     const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword', maxResults: 3 });
     for (let i = 1; i <= 5; i++) {
       await hooks['tool.definition']!({ toolID: `tool${i}` }, { description: `Tool ${i}`, parameters: {} });
@@ -790,24 +698,18 @@ describe('ToolSearchPlugin', () => {
     const sessionID = 'f5-limit-session';
     const searchTool = (hooks.tool as any).tool_search_regex;
 
-    // First search: delivers tool1-tool3 (limited by maxResults=3)
     const firstResult = await searchTool.execute({ pattern: '^tool[123]$' }, { sessionID });
     expect(firstResult).toContain('Found 3 tool(s)');
 
-    // Second search: delivers tool4-tool5 (new, within limit)
     const secondResult = await searchTool.execute({ pattern: '^tool[45]$' }, { sessionID });
     expect(secondResult).toContain('Found 2 tool(s)');
 
-    // Now all 5 tools are delivered. Reset authorization (simulating compress)
     await hooks['tool.execute.after']!({ tool: 'compress', sessionID, callID: 'c1' } as any, { output: 'compressed' } as any);
 
-    // Third search: all 5 delivered tools match pattern, all unauthorized -> re-auth path
-    // F5: must be limited to maxResults (3)
     const thirdResult = await searchTool.execute({ pattern: '^tool' }, { sessionID });
     expect(thirdResult).toContain('Found 3 tool(s)');
     expect(thirdResult).toContain('tool1');
 
-    // tool1 should be re-authorized
     await expect(
       hooks['tool.execute.before']!({ tool: 'tool1', sessionID } as any, {} as any)
     ).resolves.not.toThrow();
@@ -821,31 +723,54 @@ describe('ToolSearchPlugin', () => {
     const sessionID = 'mixed-delivery-session';
     const searchTool = (hooks.tool as any).tool_search_regex;
 
-    // First search: deliver tool_a
     const firstResult = await searchTool.execute({ pattern: '^tool_a$' }, { sessionID });
     expect(firstResult).toContain('Found 1 tool(s)');
     expect(firstResult).toContain('tool_a');
 
-    // Reset authorization for tool_a (e.g. compress)
     await hooks['tool.execute.after']!({ tool: 'compress', sessionID, callID: 'c1' } as any, { output: 'compressed' } as any);
 
-    // Verify tool_a is unauthorized
     await expect(
       hooks['tool.execute.before']!({ tool: 'tool_a', sessionID } as any, {} as any)
     ).rejects.toThrow();
 
-    // Now search pattern '^tool_' which matches tool_a (delivered, unauthorized) AND tool_b (new)
     const secondResult = await searchTool.execute({ pattern: '^tool_' }, { sessionID });
     expect(secondResult).toContain('Found 2 tool(s)');
     expect(secondResult).toContain('tool_a');
     expect(secondResult).toContain('tool_b');
 
-    // Verify both tool_a and tool_b are now authorized
     await expect(
       hooks['tool.execute.before']!({ tool: 'tool_a', sessionID } as any, {} as any)
     ).resolves.not.toThrow();
     await expect(
       hooks['tool.execute.before']!({ tool: 'tool_b', sessionID } as any, {} as any)
+    ).resolves.not.toThrow();
+  });
+
+  it('transforms messages and handles sleev compression synchronization', async () => {
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
+    const messages = [
+      { info: { sessionID: 'sess-sync' }, role: 'user', content: '<sleev-id-compressed>old prompt</sleev-id-compressed>' },
+    ];
+    await expect(
+      hooks['experimental.chat.messages.transform']!({} as any, { messages } as any)
+    ).resolves.not.toThrow();
+  });
+
+  it('handles session compacting lifecycle hook', async () => {
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
+    const output = { context: [] as string[] };
+    await hooks['experimental.session.compacting']!({ sessionID: 'sess-comp' } as any, output as any);
+    expect(output.context.length).toBeGreaterThan(0);
+    expect(output.context[0]).toContain('tool');
+  });
+
+  it('handles session.deleted event and other event types', async () => {
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
+    await expect(
+      hooks.event!({ event: { type: 'session.deleted', properties: { sessionID: 'sess-del' } } } as any)
+    ).resolves.not.toThrow();
+    await expect(
+      hooks.event!({ event: { type: 'chat.message' } } as any)
     ).resolves.not.toThrow();
   });
 });
