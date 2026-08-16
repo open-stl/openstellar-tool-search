@@ -19,7 +19,7 @@ interface PersistedSession {
 
 type PersistedAuthMap = Record<string, PersistedSession>;
 
-export const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface AuthPersistenceOptions {
   filePath?: string;
@@ -44,6 +44,23 @@ function looksLikeSessionEntry(entry: unknown): entry is PersistedSession {
   );
 }
 
+const activeAuthPersistenceInstances = new Set<AuthPersistence>();
+let authExitHandlerRegistered = false;
+
+function registerGlobalAuthExitHandler(): void {
+  if (authExitHandlerRegistered || typeof process === 'undefined' || typeof process.on !== 'function') return;
+  authExitHandlerRegistered = true;
+  process.on('beforeExit', () => {
+    for (const instance of activeAuthPersistenceInstances) {
+      try {
+        instance.flushSync();
+      } catch {
+        // Ignore exit flush failures
+      }
+    }
+  });
+}
+
 export class AuthPersistence {
   private filePath: string;
   private debounceMs: number;
@@ -61,11 +78,8 @@ export class AuthPersistence {
     this.debounceMs = options.debounceMs ?? 50;
     this.ttlMs = options.ttlMs ?? THIRTY_DAYS_MS;
 
-    if (typeof process !== 'undefined' && typeof process.on === 'function') {
-      process.on('beforeExit', () => {
-        this.flushSync();
-      });
-    }
+    activeAuthPersistenceInstances.add(this);
+    registerGlobalAuthExitHandler();
   }
 
   public getFilePath(): string {
@@ -165,6 +179,7 @@ export class AuthPersistence {
       this.timer = null;
       this.flush().catch(() => {});
     }, this.debounceMs);
+    this.timer?.unref?.();
   }
 
   public async flush(): Promise<void> {

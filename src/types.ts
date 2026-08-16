@@ -21,7 +21,7 @@ export interface ToolSearchConfig {
   /** Tool IDs exempt from deferral (full descriptions always loaded). Default: [] */
   alwaysLoad?: string[];
 
-  /** Maximum search results returned per query. Default: 10 */
+  /** Maximum search results returned per query. Default: 5 */
   maxResults?: number;
 
   /** Search mode: 'hybrid' (BM25 + vectors) or 'keyword' (BM25 only). Default: 'hybrid' */

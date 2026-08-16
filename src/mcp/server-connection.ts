@@ -36,29 +36,48 @@ export async function createMcpConnection<T extends BaseServerConfig>(
 
   const transport = await connect(server, client);
 
-  // Safely guard against transport wrapper mocks in test environments that lack transport.send
-  if (transport && typeof (transport as unknown as Record<string, unknown>).send === 'function') {
-    const rawTransport = transport as unknown as { send: (...args: unknown[]) => Promise<unknown>; onmessage?: (msg: unknown) => void };
-    const origSend = rawTransport.send.bind(rawTransport);
-    rawTransport.send = async function (message: unknown, options: unknown) {
-      if (message && typeof message === 'object' && (message as { method?: string }).method === 'tools/list') {
-        const origOnMessage = rawTransport.onmessage;
-        rawTransport.onmessage = function (response: unknown) {
-          if (response && typeof response === 'object') {
-            const resObj = response as { result?: { tools?: Array<{ inputSchema?: unknown; outputSchema?: unknown }> } };
-            if (resObj.result && Array.isArray(resObj.result.tools)) {
-              for (const t of resObj.result.tools) {
+  return { client, transport };
+}
+
+/**
+ * Attaches a singleton transport interceptor that normalizes local $ref ($defs)
+ * on tools/list responses without creating nested closure chains on repeat requests.
+ */
+export function attachMcpTransportInterceptor(transport: Transport): Transport {
+  if (!transport || typeof transport !== 'object') return transport;
+
+  const rawTransport = transport as unknown as { onmessage?: (msg: unknown) => void };
+  let underlyingHandler = rawTransport.onmessage;
+
+  Object.defineProperty(transport, 'onmessage', {
+    get() {
+      return underlyingHandler;
+    },
+    set(newHandler: ((msg: unknown) => void) | undefined) {
+      if (!newHandler) {
+        underlyingHandler = undefined;
+        return;
+      }
+      underlyingHandler = function (response: unknown) {
+        if (response && typeof response === 'object') {
+          const resObj = response as { result?: { tools?: Array<{ inputSchema?: unknown; outputSchema?: unknown }> } };
+          if (resObj.result && Array.isArray(resObj.result.tools)) {
+            for (const t of resObj.result.tools) {
+              try {
                 if (t.inputSchema) t.inputSchema = inlineLocalReferences(t.inputSchema);
                 if (t.outputSchema) t.outputSchema = inlineLocalReferences(t.outputSchema);
+              } catch {
+                // If schema inlining fails for deeply complex/circular schemas, proceed with raw schema
               }
             }
           }
-          if (origOnMessage) origOnMessage(response);
-        };
-      }
-      return origSend(message, options);
-    };
-  }
+        }
+        return newHandler(response);
+      };
+    },
+    configurable: true,
+    enumerable: true,
+  });
 
-  return { client, transport };
+  return transport;
 }

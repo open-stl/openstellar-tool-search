@@ -45,6 +45,13 @@ export class ToolStore {
     const old = this.store.get(id);
     if (old && (description === null || description === undefined)) return false;
     const safe = description ?? '';
+
+    // Guard against overwriting stored full descriptions with truncated `[deferred]` descriptions
+    // when tool.definition runs multiple times across turns
+    if (old && !old.description.includes('[deferred]') && safe.includes('[deferred]')) {
+      return false;
+    }
+
     if (!old || old.description !== safe) {
       this.store.set(id, { id, description: safe, parameters });
       this.notifyChanged();

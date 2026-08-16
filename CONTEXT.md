@@ -31,3 +31,15 @@ _Avoid_: fail-open, silent-fail, dropped
 **Snapshot**:
 The set of tools opencode captures at session start; tools outside it are uncallable for that session.
 _Avoid_: tool list, catalog, frozen set
+
+**Deferred Authorization**:
+The session-bound permission state requiring a deferred tool to be discovered via search before execution.
+_Avoid_: tool approval, whitelist, unlocked tool
+
+**Tool Vault**:
+The registry indexing all static and MCP tool metadata, descriptions, and parameter schemas.
+_Avoid_: tool catalog, cache, index store
+
+**Dual Search**:
+The complementary discovery interface combining semantic/BM25 task discovery (`tool_search`) and exact/pattern ID matching (`tool_search_regex`).
+_Avoid_: hybrid search, regex tool

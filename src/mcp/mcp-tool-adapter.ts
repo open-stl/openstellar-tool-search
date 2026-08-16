@@ -9,6 +9,7 @@ import { closeTransport } from './transports/close-transport.js';
 
 const zObj = tool.schema;
 const DEFAULT_TIMEOUT_MS = 60_000;
+const MAX_ZOD_SCHEMA_DEPTH = 20;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ZodType = any;
@@ -16,7 +17,10 @@ type ZodType = any;
 /**
  * Converts a JSON Schema representation into a Zod schema using open-code plugin tool.schema primitives.
  */
-export function jsonSchemaToZod(schema: unknown): any {
+export function jsonSchemaToZod(schema: unknown, depth = 0): any {
+  if (depth > MAX_ZOD_SCHEMA_DEPTH) {
+    return zObj.string();
+  }
   if (!schema || typeof schema !== 'object') {
     return zObj.string();
   }
@@ -32,10 +36,10 @@ export function jsonSchemaToZod(schema: unknown): any {
     }
     const isNullable = (s.type as string[]).includes('null');
     if (nonNullTypes.length === 1) {
-      const result = createFromType(nonNullTypes[0] as string, s);
+      const result = createFromType(nonNullTypes[0] as string, s, depth + 1);
       return isNullable ? result.nullable() : result;
     }
-    const branches = nonNullTypes.map((t: string) => createFromType(t, s));
+    const branches = nonNullTypes.map((t: string) => createFromType(t, s, depth + 1));
     const union = zObj.union(branches as [ZodType, ZodType, ...ZodType[]]);
     return isNullable ? union.nullable() : union;
   }
@@ -47,11 +51,11 @@ export function jsonSchemaToZod(schema: unknown): any {
 
   // Handle union/intersection types
   if (s.anyOf && Array.isArray(s.anyOf) && s.anyOf.length > 0) {
-    const branches = s.anyOf.map((branch: unknown) => jsonSchemaToZod(branch));
+    const branches = s.anyOf.map((branch: unknown) => jsonSchemaToZod(branch, depth + 1));
     return branches.length === 1 ? branches[0] : zObj.union(branches as [ZodType, ZodType, ...ZodType[]]);
   }
   if (s.oneOf && Array.isArray(s.oneOf) && s.oneOf.length > 0) {
-    const branches = s.oneOf.map((branch: unknown) => jsonSchemaToZod(branch));
+    const branches = s.oneOf.map((branch: unknown) => jsonSchemaToZod(branch, depth + 1));
     return branches.length === 1 ? branches[0] : zObj.union(branches as [ZodType, ZodType, ...ZodType[]]);
   }
   if (s.allOf && Array.isArray(s.allOf) && s.allOf.length > 0) {
@@ -76,13 +80,17 @@ export function jsonSchemaToZod(schema: unknown): any {
         }
       }
     }
-    return jsonSchemaToZod(merged);
+    return jsonSchemaToZod(merged, depth + 1);
   }
 
-  return createFromType(s.type as string | undefined, s);
+  return createFromType(s.type as string | undefined, s, depth + 1);
 }
 
-function createFromType(type: string | undefined, s: Record<string, unknown>): ZodType {
+function createFromType(type: string | undefined, s: Record<string, unknown>, depth = 0): ZodType {
+  if (depth > MAX_ZOD_SCHEMA_DEPTH) {
+    return zObj.string();
+  }
+
   if (type === 'string') {
     const enumValues = s.enum;
     if (Array.isArray(enumValues) && enumValues.every((v): v is string => typeof v === 'string')) {
@@ -107,7 +115,7 @@ function createFromType(type: string | undefined, s: Record<string, unknown>): Z
   }
 
   if (type === 'array') {
-    return zObj.array(s.items ? jsonSchemaToZod(s.items) : zObj.string());
+    return zObj.array(s.items ? jsonSchemaToZod(s.items, depth + 1) : zObj.string());
   }
 
   if (type === 'object' || s.properties) {
@@ -117,7 +125,7 @@ function createFromType(type: string | undefined, s: Record<string, unknown>): Z
     const properties = (s.properties as Record<string, unknown> | undefined) || {};
 
     for (const [key, prop] of Object.entries(properties)) {
-      let zodType = jsonSchemaToZod(prop);
+      let zodType = jsonSchemaToZod(prop, depth + 1);
       if (!required.has(key)) {
         zodType = zodType.optional();
       }
@@ -335,15 +343,6 @@ export class AdapterCache {
     const entries = Array.from(this.cache.values());
     this.cache.clear();
     this.inFlight.clear();
-    await Promise.allSettled(
-      entries.map(async (entry) => {
-        await closeTransport(entry.transport);
-      }),
-    );
-  }
-
-  async closeAllTransports(): Promise<void> {
-    const entries = Array.from(this.cache.values());
     await Promise.allSettled(
       entries.map(async (entry) => {
         await closeTransport(entry.transport);

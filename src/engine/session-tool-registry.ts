@@ -102,10 +102,6 @@ export class SessionToolRegistry {
     return this.authorization.resetIfConfigured(toolID, sessionID);
   }
 
-  public resetAuthorization(sessionID: string | undefined): void {
-    this.authorization.resetSession(sessionID);
-  }
-
   public compactSession(sessionID: string | undefined): void {
     if (!sessionID) return;
     this.authorization.resetSession(sessionID);

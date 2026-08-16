@@ -1,0 +1,338 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { existsSync, readFileSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import {
+  AuthPersistence,
+  getDefaultAuthStoragePath,
+  type PersistedToolAuthorization,
+} from '../src/engine/auth-persistence.js';
+import { AuthorizationState } from '../src/engine/authorization-state.js';
+import { SessionToolRegistry } from '../src/engine/session-tool-registry.js';
+import {
+  DeliveryHistory,
+  computeFingerprint,
+} from '../src/engine/delivery-history.js';
+import {
+  checkForUpdate,
+  isNewerVersion,
+  getPackageCacheTargets,
+} from '../src/hooks/auto-update-checker.js';
+import {
+  parseRegistryUrl,
+  buildDistTagsUrl,
+} from '../src/hooks/npm-registry.js';
+import { UpdateCheckLifecycle } from '../src/hooks/update-check.js';
+import type { ToolMeta } from '../src/types.js';
+
+// ============================================================================
+// AuthorizationState & AuthPersistence
+// ============================================================================
+
+describe('AuthorizationState & AuthPersistence', () => {
+  let testDir: string;
+  let testFilePath: string;
+
+  beforeEach(() => {
+    testDir = mkdtempSync(join(tmpdir(), 'tool-search-auth-test-'));
+    testFilePath = join(testDir, 'authorizations.json');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('getDefaultAuthStoragePath returns path under user cache / APPDATA', () => {
+    const path = getDefaultAuthStoragePath();
+    expect(path).toContain('tool-search');
+    expect(path).toContain('authorizations.json');
+  });
+
+  it('loads mixed legacy and strictly valid structured tools while dropping malformed records', () => {
+    const validStructured = { kind: 'canonical-tool', version: 1, canonicalId: 'foo_ide' };
+    const initialData = {
+      'mixed-session': {
+        tools: [
+          'ordinary_tool',
+          validStructured,
+          { kind: 'canonical-tool', version: 1, canonicalId: 'extra', extra: true },
+          { kind: 'wrong-kind', version: 1, canonicalId: 'wrong' },
+          { kind: 'canonical-tool', version: 2, canonicalId: 'wrong-version' },
+          { kind: 'canonical-tool', version: 1, canonicalId: '' },
+          { kind: 'canonical-tool', version: 1 },
+          [],
+          { kind: 'canonical-tool', version: 1, canonicalId: 42 },
+        ],
+      },
+    };
+    writeFileSync(testFilePath, JSON.stringify(initialData), 'utf-8');
+
+    const { authorizations } = new AuthPersistence({ filePath: testFilePath }).load();
+    expect(Array.from(authorizations.get('mixed-session')!)).toEqual(['ordinary_tool', validStructured]);
+  });
+
+  it('expires sessions older than 30 days during load', () => {
+    const now = Date.now();
+    const initialData = {
+      'old-session': {
+        tools: ['toolA', 'toolB'],
+        lastSeen: now - 31 * 24 * 60 * 60 * 1000,
+      },
+      'active-session': {
+        tools: ['toolC'],
+        lastSeen: now - 10 * 24 * 60 * 60 * 1000,
+      },
+    };
+    writeFileSync(testFilePath, JSON.stringify(initialData), 'utf-8');
+
+    const ap = new AuthPersistence({ filePath: testFilePath });
+    const { authorizations } = ap.load();
+
+    expect(authorizations.has('old-session')).toBe(false);
+    expect(authorizations.has('active-session')).toBe(true);
+    expect(Array.from(authorizations.get('active-session')!)).toEqual(['toolC']);
+  });
+
+  it('handles invalid JSON gracefully (fail-open)', () => {
+    writeFileSync(testFilePath, 'NOT_VALID_JSON{', 'utf-8');
+    const ap = new AuthPersistence({ filePath: testFilePath });
+    const { authorizations, lastSeen } = ap.load();
+
+    expect(authorizations.size).toBe(0);
+    expect(lastSeen.size).toBe(0);
+  });
+
+  it('flushes pending state to disk with atomic write', async () => {
+    const ap = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
+    const auths = new Map<string, Set<PersistedToolAuthorization>>([
+      ['s1', new Set(['git_commit', 'read_file'])],
+    ]);
+    const now = Date.now();
+    const lastSeen = new Map<string, number>([['s1', now]]);
+
+    ap.save(auths, lastSeen);
+    await ap.flush();
+
+    expect(existsSync(testFilePath)).toBe(true);
+    const content = JSON.parse(readFileSync(testFilePath, 'utf-8'));
+    expect(content).toEqual({
+      s1: {
+        tools: ['git_commit', 'read_file'],
+        lastSeen: now,
+      },
+    });
+  });
+
+  it('merges sessions from multiple processes writing to the same file without data loss', async () => {
+    const ap1 = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
+    const ap2 = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
+    const tA = Date.now() - 1000;
+    const tB = Date.now();
+
+    ap1.save(new Map([['sessionA', new Set(['toolA'])]]), new Map([['sessionA', tA]]));
+    await ap1.flush();
+
+    ap2.save(new Map([['sessionB', new Set(['toolB'])]]), new Map([['sessionB', tB]]));
+    await ap2.flush();
+
+    expect(existsSync(testFilePath)).toBe(true);
+    const content = JSON.parse(readFileSync(testFilePath, 'utf-8'));
+    expect(content).toEqual({
+      sessionA: { tools: ['toolA'], lastSeen: tA },
+      sessionB: { tools: ['toolB'], lastSeen: tB },
+    });
+  });
+
+  it('AuthorizationState tracks authorizations and requires reminders', () => {
+    const persistence = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
+    const state = new AuthorizationState({
+      alwaysOn: ['always_tool'],
+      resetTools: ['compress'],
+      persistence,
+    });
+
+    state.registerTool('tool_a');
+
+    expect(state.isAuthorized('sess-1', 'tool_a')).toBe(false);
+    expect(state.requiresReminder('sess-1', 'tool_a', 'tool_a')).toBe(true);
+
+    state.authorize('sess-1', [{ id: 'tool_a', description: 'Tool A', parameters: {} }]);
+    expect(state.isAuthorized('sess-1', 'tool_a')).toBe(true);
+    expect(state.requiresReminder('sess-1', 'tool_a', 'tool_a')).toBe(false);
+
+    state.resetSession('sess-1');
+    expect(state.isAuthorized('sess-1', 'tool_a')).toBe(false);
+  });
+});
+
+// ============================================================================
+// SessionToolRegistry & DeliveryHistory
+// ============================================================================
+
+describe('SessionToolRegistry & DeliveryHistory', () => {
+  let testFile: string;
+
+  beforeEach(() => {
+    testFile = join(tmpdir(), `test-session-reg-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+  });
+
+  afterEach(() => {
+    if (existsSync(testFile)) {
+      try { rmSync(testFile, { force: true }); } catch {}
+    }
+  });
+
+  const toolA: ToolMeta = { id: 'tool_a', description: 'Tool A description', parameters: { type: 'object' } };
+  const toolB: ToolMeta = { id: 'tool_b', description: 'Tool B description', parameters: { type: 'object' } };
+
+  it('registers tools as deferred when not in alwaysOn', () => {
+    const registry = new SessionToolRegistry({
+      alwaysOn: ['tool_search'],
+      resetTools: ['compress'],
+      filePath: testFile,
+      debounceMs: 10,
+    });
+
+    expect(registry.registerTool('tool_search')).toBe(false);
+    expect(registry.registerTool('tool_a')).toBe(true);
+    expect(registry.deferredCount).toBe(1);
+  });
+
+  it('processes search results and authorizes new discoveries', () => {
+    const registry = new SessionToolRegistry({
+      alwaysOn: ['tool_search'],
+      resetTools: ['compress'],
+      filePath: testFile,
+      debounceMs: 10,
+    });
+
+    registry.registerTool('tool_a');
+    registry.registerTool('tool_b');
+
+    const res = registry.processSearchResult('session-1', [toolA, toolB], 10);
+    expect(res.kind).toBe('new');
+    expect(res.hits).toHaveLength(2);
+    expect(registry.isAuthorized('session-1', 'tool_a')).toBe(true);
+    expect(registry.isAuthorized('session-1', 'tool_b')).toBe(true);
+  });
+
+  it('returns No-Op Discovery when all results are previously delivered and authorized', () => {
+    const registry = new SessionToolRegistry({
+      alwaysOn: ['tool_search'],
+      resetTools: ['compress'],
+      filePath: testFile,
+      debounceMs: 10,
+    });
+
+    registry.registerTool('tool_a');
+    registry.processSearchResult('session-1', [toolA], 10);
+
+    const second = registry.processSearchResult('session-1', [toolA], 10);
+    expect(second.kind).toBe('no-op');
+    expect(second.responseText).toContain('No new tools discovered');
+  });
+
+  it('DeliveryHistory splits new and delivered tools correctly', () => {
+    const dh = new DeliveryHistory();
+    const split1 = dh.filterNewDiscoveries('s1', [toolA, toolB]);
+    expect(split1.new).toHaveLength(2);
+    expect(split1.delivered).toHaveLength(0);
+
+    dh.recordDelivered('s1', 'tool_a', computeFingerprint(toolA));
+    const split2 = dh.filterNewDiscoveries('s1', [toolA, toolB]);
+    expect(split2.new).toHaveLength(1);
+    expect(split2.new[0].id).toBe('tool_b');
+    expect(split2.delivered).toHaveLength(1);
+    expect(split2.delivered[0].id).toBe('tool_a');
+  });
+
+  it('DeliveryHistory detects fingerprint changes as new discoveries', () => {
+    const dh = new DeliveryHistory();
+    dh.recordDelivered('s1', 'tool_a', computeFingerprint(toolA));
+
+    const toolAChanged: ToolMeta = { id: 'tool_a', description: 'Updated desc', parameters: {} };
+    const res = dh.filterNewDiscoveries('s1', [toolAChanged]);
+    expect(res.new).toHaveLength(1);
+    expect(res.new[0].id).toBe('tool_a');
+  });
+
+  it('DeliveryHistory maintains session isolation and supports clearing', () => {
+    const dh = new DeliveryHistory();
+    dh.recordDelivered('s1', 'tool_a', computeFingerprint(toolA));
+
+    expect(dh.filterNewDiscoveries('s2', [toolA]).new).toHaveLength(1);
+
+    dh.clear('s1');
+    expect(dh.filterNewDiscoveries('s1', [toolA]).new).toHaveLength(1);
+  });
+});
+
+// ============================================================================
+// AutoUpdateChecker & npm-registry
+// ============================================================================
+
+describe('AutoUpdateChecker & npm-registry', () => {
+  it('compares semver versions accurately with isNewerVersion', () => {
+    expect(isNewerVersion('1.0.1', '1.0.0')).toBe(true);
+    expect(isNewerVersion('1.0.0', '1.0.0')).toBe(false);
+    expect(isNewerVersion('1.0.0', '1.0.1')).toBe(false);
+    expect(isNewerVersion('1.0.0', '1.0.0-alpha')).toBe(true);
+    expect(isNewerVersion('1.0.0-alpha', '1.0.0')).toBe(false);
+    expect(isNewerVersion('invalid', '1.0.0')).toBe(false);
+  });
+
+  it('parses and normalizes registry URLs safely', () => {
+    expect(parseRegistryUrl('https://registry.npmjs.org')).toBe('https://registry.npmjs.org/');
+    expect(parseRegistryUrl('http://localhost:4873')).toBe('http://localhost:4873/');
+    expect(parseRegistryUrl('https://token:secret@registry.npmjs.org')).toBeNull();
+    expect(parseRegistryUrl('https://registry.npmjs.org?q=1')).toBeNull();
+    expect(parseRegistryUrl('https://registry.npmjs.org#hash')).toBeNull();
+  });
+
+  it('builds dist-tags endpoint URL', () => {
+    const url = buildDistTagsUrl('https://registry.npmjs.org/', '@openstellar/tool-search');
+    expect(url).toBe('https://registry.npmjs.org/-/package/%40openstellar%2Ftool-search/dist-tags');
+  });
+
+  it('builds wrapper cache target directories', () => {
+    expect(getPackageCacheTargets('/tmp/packages')).toEqual([
+      '/tmp/packages/@openstellar/tool-search',
+      '/tmp/packages/@openstellar/tool-search@latest',
+    ]);
+  });
+
+  it('runs checkForUpdate lifecycle when newer version exists', async () => {
+    let invalidated = false;
+    const result = await checkForUpdate({
+      getCurrentVersion: () => '1.0.0',
+      getLatestVersion: async () => '1.0.1',
+      invalidatePackageCache: () => {
+        invalidated = true;
+        return true;
+      },
+    });
+
+    expect(result).toEqual({
+      outcome: 'update-staged',
+      currentVersion: '1.0.0',
+      latestVersion: '1.0.1',
+    });
+    expect(invalidated).toBe(true);
+  });
+
+  it('UpdateCheckLifecycle handles events with cooldown and trigger check', async () => {
+    const mockCtx = {
+      client: {
+        tui: {
+          showToast: vi.fn().mockResolvedValue(undefined),
+        },
+      },
+    };
+
+    const lifecycle = new UpdateCheckLifecycle(mockCtx as any);
+    await expect(lifecycle.handleEvent('session.created')).resolves.not.toThrow();
+  });
+});

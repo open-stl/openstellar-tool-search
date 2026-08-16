@@ -6,19 +6,18 @@ import { SessionToolRegistry } from './session-tool-registry.js';
 import { toast } from '../hooks/toast.js';
 import { truncateDescription } from '../hooks/deferral.js';
 import { normalizeParameters } from '../catalog/schema-normalize.js';
-import { debugLog, timedOp } from '../utils/debug.js';
 
 export const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
 export const DEFAULT_DEFER = '[deferred]';
 const MAX_REGEX_PATTERN_LENGTH = 200;
-export const SEARCH_TIMEOUT_MS = 2000;
+const SEARCH_TIMEOUT_MS = 2000;
 const MAX_QUERY_LENGTH = 500;
 /**
  * Second-phase budget granted when the first phase found no hits while the
  * catalog was still warming up: gives a slow-but-alive MCP server time to
  * finish its handshake before the search reports the tool as missing.
  */
-export const EXTENDED_WAIT_MS = 3000;
+const EXTENDED_WAIT_MS = 3000;
 
 /**
  * Returned instead of "No matches ..." when a search found no hits and the
@@ -392,69 +391,65 @@ export class SessionEngine {
         description: `Find deferred tools marked "${deferLabel}" by task, capability, or semantic intent when you do not know the exact tool name. Returns full tool IDs and parameter schemas.\nCall tool_search({ query: "<task description>" }).\nWHEN TO USE: you need a capability but do not know which tool provides it (e.g. "search git commit history", "inspect AST"), or discovering relevant tools for a broad task.\nWHEN NOT TO USE:\n- You already know the exact tool ID(s) (e.g. "skill", "read", "bash") — use tool_search_regex({ pattern: "^tool_name$" }) instead.\n- DO NOT pass space-separated lists of multiple tool names — use tool_search_regex with alternation instead.\n- You already searched this tool in the current active context and know its canonical ID — call it directly instead.`,
         args: { query: tool.schema.string().describe('Semantic capability or task description (e.g. "search code AST", "fetch web page").') },
         async execute(args, context) {
-          return timedOp('SessionEngine', 'tool_search', async () => {
-            if (args.query.length > MAX_QUERY_LENGTH) {
-              return `Query exceeds maximum length of ${MAX_QUERY_LENGTH} characters.`;
+          if (args.query.length > MAX_QUERY_LENGTH) {
+            return `Query exceeds maximum length of ${MAX_QUERY_LENGTH} characters.`;
+          }
+          const sessionID = context?.sessionID;
+
+          let allHits = await vault.query(args.query, vault.count || maxResults, SEARCH_TIMEOUT_MS);
+
+          if (allHits.length === 0) {
+            const ready = await vault.awaitReady(SEARCH_TIMEOUT_MS);
+            if (!ready) {
+              await vault.awaitReady(EXTENDED_WAIT_MS);
             }
-            const sessionID = context?.sessionID;
+            allHits = await vault.query(args.query, vault.count || maxResults, SEARCH_TIMEOUT_MS);
+          }
 
-            let allHits = await vault.query(args.query, vault.count || maxResults, SEARCH_TIMEOUT_MS);
-
-            if (allHits.length === 0) {
-              const ready = await vault.awaitReady(SEARCH_TIMEOUT_MS);
-              if (!ready) {
-                await vault.awaitReady(EXTENDED_WAIT_MS);
-              }
-              allHits = await vault.query(args.query, vault.count || maxResults, SEARCH_TIMEOUT_MS);
+          if (allHits.length === 0) {
+            if (!(await vault.awaitReady(0))) {
+              return WARMING_MESSAGE;
             }
+            return `No matches for "${args.query}". Try broader terms or tool_search_regex.`;
+          }
 
-            if (allHits.length === 0) {
-              if (!(await vault.awaitReady(0))) {
-                return WARMING_MESSAGE;
-              }
-              return `No matches for "${args.query}". Try broader terms or tool_search_regex.`;
-            }
-
-            const processing = sessionRegistry.processSearchResult(sessionID, allHits, maxResults);
-            return processing.responseText;
-          }, { query: args.query, sessionID: context?.sessionID });
+          const processing = sessionRegistry.processSearchResult(sessionID, allHits, maxResults);
+          return processing.responseText;
         },
       }),
       tool_search_regex: tool({
         description: `Retrieve full descriptions and schemas for known tool ID(s) or pattern matching using regex. Returns full tool IDs and parameter schemas.\nCall tool_search_regex({ pattern: "<regex>" }).\nWHEN TO USE:\n- You know the exact tool ID (e.g. tool_search_regex({ pattern: "^skill$" })).\n- You want to unlock MULTIPLE known tools at once via regex alternation (e.g. tool_search_regex({ pattern: "^(read|write|edit|glob|grep|bash|skill)$" })).\n- Finding tools matching a specific prefix or pattern (e.g. "^ctx_").\nWHEN NOT TO USE:\n- Semantic/fuzzy searches when tool names are unknown — use tool_search({ query: "<task>" }) instead.\n- You already searched this tool in the current active context and know its canonical ID — call it directly instead.`,
         args: { pattern: tool.schema.string().describe('Anchored regex for exact ID: "^id$", multiple IDs: "^(toolA|toolB)$", or prefix: "^prefix_".') },
         async execute(args, context) {
-          return timedOp('SessionEngine', 'tool_search_regex', async () => {
-            if (args.pattern.length > MAX_REGEX_PATTERN_LENGTH) {
-              return `Pattern exceeds maximum length of ${MAX_REGEX_PATTERN_LENGTH} characters.`;
-            }
-            try {
-              new RegExp(args.pattern, 'i');
-            } catch (err) {
-              return `Invalid regex pattern "${args.pattern}": ${err instanceof Error ? err.message : String(err)}.`;
-            }
-            const sessionID = context?.sessionID;
+          if (args.pattern.length > MAX_REGEX_PATTERN_LENGTH) {
+            return `Pattern exceeds maximum length of ${MAX_REGEX_PATTERN_LENGTH} characters.`;
+          }
+          try {
+            new RegExp(args.pattern, 'i');
+          } catch (err) {
+            return `Invalid regex pattern "${args.pattern}": ${err instanceof Error ? err.message : String(err)}.`;
+          }
+          const sessionID = context?.sessionID;
 
-            let allHits = vault.grep(args.pattern, vault.count || maxResults);
+          let allHits = vault.grep(args.pattern, vault.count || maxResults);
 
-            if (allHits.length === 0) {
-              const ready = await vault.awaitReady(SEARCH_TIMEOUT_MS);
-              if (!ready) {
-                await vault.awaitReady(EXTENDED_WAIT_MS);
-              }
-              allHits = vault.grep(args.pattern, vault.count || maxResults);
+          if (allHits.length === 0) {
+            const ready = await vault.awaitReady(SEARCH_TIMEOUT_MS);
+            if (!ready) {
+              await vault.awaitReady(EXTENDED_WAIT_MS);
             }
+            allHits = vault.grep(args.pattern, vault.count || maxResults);
+          }
 
-            if (allHits.length === 0) {
-              if (!(await vault.awaitReady(0))) {
-                return WARMING_MESSAGE;
-              }
-              return `No tools matched pattern "${args.pattern}".`;
+          if (allHits.length === 0) {
+            if (!(await vault.awaitReady(0))) {
+              return WARMING_MESSAGE;
             }
+            return `No tools matched pattern "${args.pattern}".`;
+          }
 
-            const processing = sessionRegistry.processSearchResult(sessionID, allHits, maxResults);
-            return processing.responseText;
-          }, { pattern: args.pattern, sessionID: context?.sessionID });
+          const processing = sessionRegistry.processSearchResult(sessionID, allHits, maxResults);
+          return processing.responseText;
         },
       }),
     };

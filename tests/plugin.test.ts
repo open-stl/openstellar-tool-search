@@ -715,6 +715,19 @@ describe('ToolSearchPlugin', () => {
     ).resolves.not.toThrow();
   });
 
+  it('applies default maxResults of 5 when unspecified', async () => {
+    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
+    for (let i = 1; i <= 8; i++) {
+      await hooks['tool.definition']!({ toolID: `default_tool_${i}` }, { description: `Default Tool ${i}`, parameters: {} });
+    }
+
+    const sessionID = 'default-maxresults-session';
+    const searchTool = (hooks.tool as any).tool_search_regex;
+
+    const result = await searchTool.execute({ pattern: '^default_tool_' }, { sessionID });
+    expect(result).toContain('Found 5 tool(s)');
+  });
+
   it('returns and authorizes both new tools and previously delivered but unauthorized tools', async () => {
     const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'tool_a' }, { description: 'Tool A', parameters: {} });

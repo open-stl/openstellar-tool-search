@@ -60,6 +60,23 @@ interface DeliveryHistoryPersistenceOptions {
   debounceMs?: number;
 }
 
+const activeDeliveryHistoryInstances = new Set<DeliveryHistoryPersistence>();
+let deliveryExitHandlerRegistered = false;
+
+function registerGlobalDeliveryExitHandler(): void {
+  if (deliveryExitHandlerRegistered || typeof process === 'undefined' || typeof process.on !== 'function') return;
+  deliveryExitHandlerRegistered = true;
+  process.on('beforeExit', () => {
+    for (const instance of activeDeliveryHistoryInstances) {
+      try {
+        instance.flushSync();
+      } catch {
+        // Ignore exit flush failures
+      }
+    }
+  });
+}
+
 export class DeliveryHistoryPersistence {
   private filePath: string;
   private debounceMs: number;
@@ -74,11 +91,8 @@ export class DeliveryHistoryPersistence {
     // Flush on process 'beforeExit' ensures clean exit persistence.
     this.debounceMs = options.debounceMs ?? 50;
 
-    if (typeof process !== 'undefined' && typeof process.on === 'function') {
-      process.on('beforeExit', () => {
-        this.flushSync();
-      });
-    }
+    activeDeliveryHistoryInstances.add(this);
+    registerGlobalDeliveryExitHandler();
   }
 
   public getFilePath(): string {
@@ -143,6 +157,7 @@ export class DeliveryHistoryPersistence {
       this.timer = null;
       this.flush().catch(() => {});
     }, this.debounceMs);
+    this.timer?.unref?.();
   }
 
   public async flush(): Promise<void> {

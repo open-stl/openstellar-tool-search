@@ -20,19 +20,18 @@ export class UpdateCheckLifecycle {
 
   public constructor(private readonly ctx: PluginInput) {}
 
-  /** True once an update has been staged — the plugin stops checking. */
-  public get isStaged(): boolean {
-    return this.staged;
-  }
-
   public async handleEvent(eventType: string): Promise<void> {
     if (eventType !== 'session.created' || this.staged) return;
     if (!this.checkInFlight) {
+      // Fire-and-forget: `checkForUpdate` runs npm config probes + a fetch
+      // (up to ~15s of worst-case I/O), so the caller (the `event` hook, which
+      // OpenCode dispatches around the message-send flow) must never await it.
+      // Completion — toast + staged latch — happens in the background;
+      // `checkInFlight` only dedupes concurrent checks.
       this.checkInFlight = this.runCheck().finally(() => {
         this.checkInFlight = null;
       });
     }
-    await this.checkInFlight;
   }
 
   private async runCheck(): Promise<void> {

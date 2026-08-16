@@ -39,7 +39,7 @@ export class SemanticMatcher {
   }
 
   get workerAvailable(): boolean {
-    return fs.existsSync(new URL('./matcher.worker.js', import.meta.url)) || fs.existsSync(new URL('./matcher.worker.js', import.meta.url));
+    return fs.existsSync(new URL('./matcher.worker.js', import.meta.url));
   }
 
   private computeHash(entries: IndexedEntry[]): string {
@@ -102,9 +102,7 @@ export class SemanticMatcher {
   }
 
   private async doLoadWorker(): Promise<void> {
-    const workerUrl = fs.existsSync(new URL('./matcher.worker.js', import.meta.url))
-      ? new URL('./matcher.worker.js', import.meta.url)
-      : new URL('./matcher.worker.js', import.meta.url);
+    const workerUrl = new URL('./matcher.worker.js', import.meta.url);
     if (!this.workerAvailable) {
       this.loadError = new Error('Embedding worker module is unavailable');
       this.workerInitFailed = true;
@@ -113,9 +111,11 @@ export class SemanticMatcher {
 
     return new Promise<void>((resolve) => {
       let settled = false;
+      let initTimer: NodeJS.Timeout | undefined;
       const finish = () => {
         if (!settled) {
           settled = true;
+          if (initTimer) clearTimeout(initTimer);
           resolve();
         }
       };
@@ -124,6 +124,22 @@ export class SemanticMatcher {
         for (const request of this.workerRequests.values()) request.reject(error);
         this.workerRequests.clear();
       };
+
+      initTimer = setTimeout(() => {
+        if (!settled) {
+          this.workerInitFailed = true;
+          this.loadError = new Error('Embedding worker initialization timed out');
+          this.workerReady = false;
+          try {
+            this.worker?.terminate();
+          } catch {
+            // Ignore termination errors
+          }
+          this.worker = null;
+          finish();
+        }
+      }, 10_000);
+      initTimer.unref?.();
 
       try {
         this.worker = new Worker(workerUrl);
@@ -244,7 +260,22 @@ export class SemanticMatcher {
 
       const id = ++this.workerSequence;
       return new Promise<{ data: Float32Array; dims?: number[] }>((resolve, reject) => {
-        this.workerRequests.set(id, { resolve, reject });
+        let timer: NodeJS.Timeout | undefined = setTimeout(() => {
+          this.workerRequests.delete(id);
+          reject(new Error('Inference request timed out'));
+        }, 5_000);
+        timer.unref?.();
+
+        this.workerRequests.set(id, {
+          resolve: (val) => {
+            if (timer) clearTimeout(timer);
+            resolve(val);
+          },
+          reject: (err) => {
+            if (timer) clearTimeout(timer);
+            reject(err);
+          },
+        });
         this.worker!.postMessage({
           type: 'inference',
           id,

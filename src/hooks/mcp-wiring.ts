@@ -3,7 +3,7 @@ import type { ToolVault } from '../catalog/vault.js';
 import type { SessionToolRegistry } from '../engine/session-tool-registry.js';
 import { McpToolProvider, isServerEnabled } from '../mcp/mcp-tool-provider.js';
 import type { McpServerConfig } from '../mcp/types.js';
-import type { ToolProvider, ToolDefinition } from '../catalog/tool-provider.js';
+import type { ToolDefinition } from '../catalog/tool-provider.js';
 
 /**
  * Description for a warming-up server's placeholder tool. Echoes the
@@ -29,6 +29,28 @@ const SERVER_FAILED_RESPONSE = (name: string) =>
 /** Description for a placeholder whose server settled empty (cut/failed/no tools). */
 const SERVER_FAILED_DESC = (name: string) =>
   `MCP server "${name}" failed to start (no response within the timeout). Its tools are unavailable in this session.`;
+
+const activeMcpProviders = new Set<McpToolProvider>();
+let mcpExitHandlerRegistered = false;
+
+export function _resetMcpExitHandlerForTesting(): void {
+  mcpExitHandlerRegistered = false;
+  activeMcpProviders.clear();
+}
+
+function registerGlobalMcpExitHandler(): void {
+  if (mcpExitHandlerRegistered || typeof process === 'undefined') return;
+  mcpExitHandlerRegistered = true;
+  const onExit = () => {
+    for (const provider of activeMcpProviders) {
+      provider.close().catch(() => {});
+    }
+  };
+  if (typeof process.once === 'function') {
+    process.once('beforeExit', onExit);
+    process.once('exit', onExit);
+  }
+}
 
 /**
  * MCP wiring for the plugin.
@@ -93,11 +115,8 @@ export class McpWiring {
     // are safe.
     mcpProvider.onUpdate((updatedTools) => this.handleProviderUpdate(updatedTools));
 
-    const onExit = () => {
-      mcpProvider.close().catch(() => {});
-    };
-    process.once('beforeExit', onExit);
-    process.once('exit', onExit);
+    activeMcpProviders.add(mcpProvider);
+    registerGlobalMcpExitHandler();
   }
 
   /**

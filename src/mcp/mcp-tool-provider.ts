@@ -1,8 +1,7 @@
 import type { tool } from '@opencode-ai/plugin';
 import type { ToolProvider, ToolDefinition } from '../catalog/tool-provider.js';
 import type { McpServerConfig } from './types.js';
-import type { ServerCacheEntry } from './adapter-cache.js';
-import { AdapterCache, globalAdapterCache } from './adapter-cache.js';
+import { AdapterCache, globalAdapterCache, type ServerCacheEntry } from './mcp-tool-adapter.js';
 import { TransportFactory } from './transport-factory.js';
 import { LocalTransportConnector } from './transports/local-transport.js';
 import { RemoteTransportConnector } from './transports/remote-transport.js';
@@ -47,6 +46,7 @@ function withTimeout<T>(
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<T | null>((resolve) => {
     timer = setTimeout(() => resolve(null), ms);
+    timer?.unref?.();
     if (activeTimers && timer) activeTimers.add(timer);
   });
   return Promise.race([promise, timeout]).finally(() => {
@@ -196,6 +196,7 @@ export class McpToolProvider implements ToolProvider {
         timedOut = true;
         resolve();
       }, timeoutMs);
+      timer?.unref?.();
     });
 
     try {
@@ -233,14 +234,6 @@ export class McpToolProvider implements ToolProvider {
       if (key.endsWith(`_${id}`) || key.endsWith(`-${id}`)) return t;
     }
     return undefined;
-  }
-
-  hasExecutableTool(id: string): boolean {
-    return Boolean(this.getExecutableTool(id));
-  }
-
-  getExecutableToolIds(): string[] {
-    return Array.from(this.executableTools.keys());
   }
 
   onUpdate(callback: (tools: ToolDefinition[]) => void): void {

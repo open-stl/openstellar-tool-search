@@ -74,3 +74,5 @@ if (parentPort) {
     }
   });
 }
+
+parentPort?.unref();

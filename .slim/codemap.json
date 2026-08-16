@@ -1,0 +1,60 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "last_run": "2026-08-16T11:31:15.955Z",
+    "root": "/Volumes/DB/Projects/openstellar-tool-search",
+    "include_patterns": [
+      "src/**/*.ts",
+      "package.json"
+    ],
+    "exclude_patterns": [
+      "**/*.test.ts",
+      "dist/**",
+      "node_modules/**"
+    ],
+    "exceptions": []
+  },
+  "file_hashes": {
+    "package.json": "073c5611fb2fe759103c810bc3a9f2ff",
+    "src/catalog/matcher.ts": "037a8089444732f4bdc5632f53e85b21",
+    "src/catalog/matcher.worker.ts": "2f44eeba3868381f77f5d4a3ab9cece3",
+    "src/catalog/rank.ts": "7c7241aed71a4a22472e9475dfec2379",
+    "src/catalog/schema-normalize.ts": "f2a0075423b58365cf51d1e838d86527",
+    "src/catalog/search-engine.ts": "fc8fbfdc344cc850a2ed1a732a6a80b1",
+    "src/catalog/tool-provider.ts": "8a82feeb60cf1c4683e5338b9383b1ea",
+    "src/catalog/tool-store.ts": "982fef10c5ffb0d94ade48d2321e6890",
+    "src/catalog/vault.ts": "b32d12db22dcad6ec02e85a745d69fb3",
+    "src/engine/auth-persistence.ts": "2168d69c505f7fe7dde221669839e6a4",
+    "src/engine/authorization-state.ts": "cf05af075eee4488bebfbabb3f50c51e",
+    "src/engine/delivery-history.ts": "9b58ef8ad3e2311df0dc5da1ab64a172",
+    "src/engine/session-engine.ts": "af39efad460523eb27d2e52860c1c1a6",
+    "src/engine/session-tool-registry.ts": "82ddeb4616aab3ef1fa85adc90d2f9ef",
+    "src/hooks/auto-update-checker.ts": "754471054b2737da9109eec47820c186",
+    "src/hooks/deferral.ts": "7981ce4b80f4ade58049608ef80ae409",
+    "src/hooks/mcp-wiring.ts": "500c51a2b49fe2afdbc9cea15904b6ce",
+    "src/hooks/npm-registry.ts": "715ad8977fd1c25c3933117d567e5110",
+    "src/hooks/toast.ts": "454e6dc56136a18d5c8a3e653dbe6550",
+    "src/hooks/update-check.ts": "46a1a0e8f7cdb76430e4385a1ab89ae0",
+    "src/mcp/mcp-tool-adapter.ts": "4524682a0764a1840c4b5495920c2377",
+    "src/mcp/mcp-tool-provider.ts": "9bef65996b89fcc17a1d45a62bdc38d6",
+    "src/mcp/server-connection.ts": "75b2bd2698f81cf49702dd8bf0c5a331",
+    "src/mcp/transport-factory.ts": "a4b8424fa775fb859225076bd02fb03a",
+    "src/mcp/transports/close-transport.ts": "cd0297158d9bf796779c4e084fd8a1f8",
+    "src/mcp/transports/local-transport.ts": "d12113337fe7151bcb33197dbad8a103",
+    "src/mcp/transports/remote-transport.ts": "c84f9402c5a5476e330a2c05107eb19a",
+    "src/mcp/types.ts": "bc5dba6b8855b1152592aba8044fb006",
+    "src/plugin.ts": "978dfcff5c5a32904e09b97df1fc5434",
+    "src/types.ts": "1de60feebb541f6822570391f40d7305",
+    "src/utils/atomic-write.ts": "5c93d2ea6831f1856c2e852a785f69c8"
+  },
+  "folder_hashes": {
+    ".": "e707ece4069a3fed29db9f7ebafd83e4",
+    "src": "3277bd00cbde367d7dc5f39446adf68c",
+    "src/catalog": "498e86b626f025c9950e74bd49172f4e",
+    "src/engine": "a059adc6f3e88d2c172028ca904ca30a",
+    "src/hooks": "f2883689acc11f554a720aedf4f617f8",
+    "src/mcp": "67fe58599cf9a77a5f16d80737f99c42",
+    "src/mcp/transports": "3f7d1a5e05c8c4f714136ca9c2a83b88",
+    "src/utils": "a37763f7245fbfc62c9868f0534fe08c"
+  }
+}

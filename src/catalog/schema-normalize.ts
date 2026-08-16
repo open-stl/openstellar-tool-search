@@ -2,12 +2,16 @@ import { Schema, JsonSchema } from 'effect';
 
 const CACHE = new WeakMap<object, unknown>();
 
+const MAX_SCHEMA_DEPTH = 20;
+
 export function inlineLocalReferences(
   value: unknown,
   rootSchema?: Record<string, unknown>,
   seen = new Set<string>(),
+  depth = 0,
 ): unknown {
-  if (Array.isArray(value)) return value.map((item) => inlineLocalReferences(item, rootSchema, seen));
+  if (depth > MAX_SCHEMA_DEPTH) return value;
+  if (Array.isArray(value)) return value.map((item) => inlineLocalReferences(item, rootSchema, seen, depth + 1));
   if (typeof value !== 'object' || value === null) return value;
   const record = value as Record<string, unknown>;
   const currentRoot = rootSchema ?? record;
@@ -27,20 +31,23 @@ export function inlineLocalReferences(
           { ...(target as Record<string, unknown>), ...rest },
           currentRoot,
           new Set(seen).add(name),
+          depth + 1,
         );
       }
       // If reference is unresolved at local level, strip $ref to prevent downstream resolver crashes
       const { $ref: _drop, ...rest } = record;
-      return inlineLocalReferences(rest, currentRoot, seen);
+      const normalizedRest = Object.keys(rest).length === 0 ? { type: 'object' } : rest;
+      return inlineLocalReferences(normalizedRest, currentRoot, seen, depth + 1);
     }
   }
   return Object.fromEntries(
-    Object.entries(record).map(([key, item]) => [key, inlineLocalReferences(item, currentRoot, seen)]),
+    Object.entries(record).map(([key, item]) => [key, inlineLocalReferences(item, currentRoot, seen, depth + 1)]),
   );
 }
 
-function hasLocalReference(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(hasLocalReference);
+function hasLocalReference(value: unknown, depth = 0): boolean {
+  if (depth > MAX_SCHEMA_DEPTH) return false;
+  if (Array.isArray(value)) return value.some((item) => hasLocalReference(item, depth + 1));
   if (typeof value !== 'object' || value === null) return false;
   const record = value as Record<string, unknown>;
   if (
@@ -49,23 +56,24 @@ function hasLocalReference(value: unknown): boolean {
   ) {
     return true;
   }
-  return Object.values(record).some(hasLocalReference);
+  return Object.values(record).some((item) => hasLocalReference(item, depth + 1));
 }
 
-export function dropDefinitionsIfResolved(value: unknown): unknown {
+function dropDefinitionsIfResolved(value: unknown): unknown {
   if (typeof value !== 'object' || value === null || hasLocalReference(value)) return value;
   const { $defs: _dropDefs, definitions: _dropDefinitions, ...rest } = value as Record<string, unknown>;
   return rest;
 }
 
-export function normalizeJsonSchema(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalizeJsonSchema);
+function normalizeJsonSchema(value: unknown, depth = 0): unknown {
+  if (depth > MAX_SCHEMA_DEPTH) return value;
+  if (Array.isArray(value)) return value.map((item) => normalizeJsonSchema(item, depth + 1));
   if (typeof value !== 'object' || value === null) return value;
   const record = value as Record<string, unknown>;
   const schema: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(record)) {
     if (key === 'additionalProperties' && item === true) continue;
-    schema[key] = normalizeJsonSchema(item);
+    schema[key] = normalizeJsonSchema(item, depth + 1);
   }
   if (Array.isArray(schema.anyOf)) {
     const branches = schema.anyOf as Record<string, unknown>[];
@@ -82,13 +90,13 @@ export function normalizeJsonSchema(value: unknown): unknown {
     );
     if (number && nonFinite.length === branches.length - 1) {
       const { anyOf: _drop, ...rest } = schema;
-      return normalizeJsonSchema({ ...(number as Record<string, unknown>), ...rest });
+      return normalizeJsonSchema({ ...(number as Record<string, unknown>), ...rest }, depth + 1);
     }
   }
   return schema;
 }
 
-export function convertEffectSchema(schema: unknown): unknown {
+function convertEffectSchema(schema: unknown): unknown {
   if (typeof schema !== 'object' || schema === null) return undefined;
   const cached = CACHE.get(schema as object);
   if (cached !== undefined) return cached;

@@ -15,12 +15,18 @@ export function toast(
   variant: ToastVariant = 'info',
   duration = 3000,
 ): void {
-  setTimeout(() => {
+  if (!ctx?.client?.tui?.showToast) return;
+  const timer = setTimeout(() => {
     try {
-      ctx?.client?.tui?.showToast({ body: { title, message: msg, variant, duration } }).catch(() => {});
+      if (typeof ctx?.client?.tui?.showToast === 'function') {
+        void ctx.client.tui.showToast({ body: { title, message: msg, variant, duration } }).catch(() => {});
+      }
     } catch {
       // A synchronous host error (e.g. TUI not yet attached) must never break
       // the plugin lifecycle; async rejections are swallowed by the .catch above.
     }
   }, 100);
+  if (typeof timer.unref === 'function') {
+    timer.unref();
+  }
 }
