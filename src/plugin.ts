@@ -5,10 +5,11 @@ import { UpdateCheckLifecycle } from './hooks/update-check.js';
 import { McpWiring, parseMcpConfig } from './hooks/mcp-wiring.js';
 import { DEFAULT_WARMUP_TIMEOUT_MS } from './mcp/mcp-tool-provider.js';
 import { toast } from './hooks/toast.js';
+import { setupV2 } from './v2/setup.js';
 
 const ALLOWED_CONFIG_KEYS = new Set(['alwaysLoad', 'maxResults', 'mode', 'resetTools', 'mcp', 'timeout']);
 
-function validateConfig(rawOpts: Record<string, unknown>): void {
+export function validateConfig(rawOpts: Record<string, unknown>): void {
   for (const key of Object.keys(rawOpts)) {
     if (!ALLOWED_CONFIG_KEYS.has(key)) {
       console.warn(
@@ -18,7 +19,7 @@ function validateConfig(rawOpts: Record<string, unknown>): void {
   }
 }
 
-function buildEmbedding(isKeywordMode: boolean): EmbedConfig {
+export function buildEmbedding(isKeywordMode: boolean): EmbedConfig {
   return {
     enabled: !isKeywordMode,
     quantized: false,
@@ -176,5 +177,9 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
 
 export const ToolSearchPlugin = Object.assign(ToolSearchPluginImpl, {
   id: 'openstellar-tool-search',
+  setup: setupV2,
   server: ToolSearchPluginImpl,
 });
+
+export const plugin = ToolSearchPlugin;
+export default ToolSearchPlugin;

@@ -16,7 +16,7 @@
 
 - [The 100-Tool Dilemma in Agentic Coding](#the-100-tool-dilemma-in-agentic-coding)
 - [The Solution: Deferred Tool Virtualization](#the-solution-deferred-tool-virtualization)
-- [How It Works in Practice](#how-it-works-in-practice)
+- [Demo in Action & How It Works](#demo-in-action--how-it-works)
 - [Installation](#installation)
   - [🤖 1-Click AI Setup (Recommended)](#-1-click-ai-setup-recommended)
   - [Manual Setup](#manual-setup)
@@ -50,16 +50,21 @@ In a standard environment with ~100 MCP tools:
 
 ## The Solution: Deferred Tool Virtualization
 
-**OpenStellar Tool Search** virtualizes tool delivery inside OpenCode:
+**OpenStellar Tool Search** virtualizes tool delivery inside OpenCode (supporting both OpenCode 1.x and OpenCode 2.0 / `opencode2` seamlessly):
 
 - **Zero Prompt Bloat at Startup**: Tool descriptions in the system prompt are truncated to their first sentence and marked `[deferred]`. Full parameter schemas are preserved for protocol compliance while slashing prompt weight by ~35%.
 - **Local Hybrid Search Engine**: Tools are indexed locally using BM25 Okapi and local ONNX vector embeddings (`@xenova/transformers`) running in a background Node.js worker thread.
 - **On-Demand Tool Delivery**: When an agent needs a tool, it calls `tool_search` (by natural language task) or `tool_search_regex` (by exact name or wildcard). Full tool descriptions and parameters are delivered dynamically.
 - **OpenCode v2 Parallel MCP Prewarming**: Enabled MCP servers start concurrently before returning hooks, guaranteeing all tools are safely captured in OpenCode's initial startup snapshot without unbounded hangs (fail-open timeouts).
+- **Dual-Target OpenCode Compatibility**: Native adapter exports support OpenCode 1.x plugin hooks and OpenCode 2.0 setup/transform lifecycles concurrently.
 
 ---
 
-## How It Works in Practice
+## Demo in Action & How It Works
+
+https://github.com/open-stl/openstellar-tool-search/raw/v1.0.0/assets/openstellar-tool-search.mp4
+
+> 🎥 **Video Demo**: [Watch Full Screen (MP4)](assets/openstellar-tool-search.mp4) | [QuickTime (MOV)](assets/openstellar-tool-search.mov)
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -309,7 +314,7 @@ OpenCode Startup
 # Install dependencies
 npm install
 
-# Run Vitest test suite (91 tests across 4 suites)
+# Run Vitest test suite (97 tests across 5 suites)
 npm test
 
 # Typecheck

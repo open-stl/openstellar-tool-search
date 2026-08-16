@@ -64,9 +64,8 @@ export class SessionEngine {
   public readonly vault: ToolVault;
   public readonly sessionRegistry: SessionToolRegistry;
   public readonly searchTools: Record<string, ReturnType<typeof tool>>;
-
+  public readonly deferLabel: string;
   private readonly maxResults: number;
-  private readonly deferLabel: string;
   private readonly useWorker: boolean;
   private alerted = false;
 

@@ -1,9 +1,6 @@
 import { ToolSearchPlugin } from './src/plugin.js';
 
-export const plugin = {
-  id: 'openstellar-tool-search',
-  server: ToolSearchPlugin,
-};
+export const plugin = ToolSearchPlugin;
 
 export { ToolSearchPlugin };
 export default plugin;

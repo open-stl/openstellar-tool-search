@@ -1,12 +1,13 @@
 # Repository Atlas: @openstellar/tool-search
 
 ## Project Responsibility
-`@openstellar/tool-search` is an on-demand tool search and deferred loading plugin for OpenCode. It dramatically reduces initial LLM context consumption and prompt bloat by stripping full parameter schemas from inactive tool definitions, deferring them behind lightweight placeholders (`[deferred]`), and providing high-precision hybrid search discovery (`tool_search` via BM25 + ONNX dense vector embeddings + RRF ranking, and `tool_search_regex` via regex filtering).
+`@openstellar/tool-search` is an on-demand tool search and deferred loading plugin for OpenCode, supporting both OpenCode 1.x and OpenCode 2.0 (`opencode2`) via a dual-compatibility architecture. It dramatically reduces initial LLM context consumption and prompt bloat by stripping full parameter schemas from inactive tool definitions, deferring them behind lightweight placeholders (`[deferred]`), and providing high-precision hybrid search discovery (`tool_search` via BM25 + ONNX dense vector embeddings + RRF ranking, and `tool_search_regex` via regex filtering).
 
 The plugin manages per-session authorization state machines, tool delivery deduplication, MCP client connections (local stdio and remote HTTP transports), schema normalization (dereferencing `$ref` and converting Effect-TS ASTs), and automatic background update checks with package cache invalidation.
 
 ## System Entry Points & Root Assets
-- `src/plugin.ts`: Primary plugin entry point implementing OpenCode's `@opencode-ai/plugin` interface (`ToolSearchPlugin`), orchestrating hook subscriptions and runtime bindings.
+- `src/plugin.ts`: Primary dual-target plugin entry point supporting OpenCode 1.x callable function interface and OpenCode 2.0 `{ id, setup }` structure.
+- `src/v2/setup.ts`: OpenCode 2.0 lifecycle adapter implementing tool transformations, execution hooks, session context synchronization, and event listeners.
 - `src/types.ts`: Core TypeScript definitions for configurations, search scoring, tool metadata (`ToolMeta`), hit structures (`Hit<T>`), and embedding settings.
 - `package.json`: Project manifest, dependency definitions (`@modelcontextprotocol/sdk`, `@xenova/transformers`, `effect`), and build scripts.
 - `esbuild.config.mjs`: Dual-target ESBuild bundling configuration producing ESM bundles for main runtime and isolated worker threads.
@@ -20,6 +21,7 @@ The plugin manages per-session authorization state machines, tool delivery dedup
 | Directory | Responsibility Summary | Detailed Map |
 | :--- | :--- | :--- |
 | `src/` | Plugin entry point, option validation, hook orchestration, and system-level coordination between engine, catalog, MCP, and host. | [View Map](src/codemap.md) |
+| `src/v2/` | OpenCode 2.0 plugin lifecycle adapter, tool registration (`tool.transform`), execution hooks (`execute.before`, `execute.after`), and session context synchronization (`session.hook('context')`). | — |
 | `src/catalog/` | Centralized tool metadata catalog, schema normalization (`$ref` inlining, Effect-TS conversion), Okapi BM25 ranking, ONNX vector embeddings with worker-thread offloading, and Reciprocal Rank Fusion (RRF). | [View Map](src/catalog/codemap.md) |
 | `src/engine/` | Session runtime, state-machine authorization enforcement, content-addressable tool fingerprinting, delivery deduplication (Rule 41), context pruning synchronization, and persistence adapters. | [View Map](src/engine/codemap.md) |
 | `src/hooks/` | OpenCode hook interceptors (`tool.definition`, `tool.execute.*`, `system.transform`), MCP server pre-warming lifecycle, update checks, package cache invalidation, and TUI toast delivery. | [View Map](src/hooks/codemap.md) |
