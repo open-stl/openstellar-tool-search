@@ -16,7 +16,7 @@
 
 - [The 100-Tool Dilemma in Agentic Coding](#the-100-tool-dilemma-in-agentic-coding)
 - [The Solution: Deferred Tool Virtualization](#the-solution-deferred-tool-virtualization)
-- [Real-Time Demo](#real-time-demo)
+- [How It Works in Practice](#how-it-works-in-practice)
 - [Installation](#installation)
   - [🤖 1-Click AI Setup (Recommended)](#-1-click-ai-setup-recommended)
   - [Manual Setup](#manual-setup)
@@ -59,11 +59,7 @@ In a standard environment with ~100 MCP tools:
 
 ---
 
-## Real-Time Demo
-
-<p align="center">
-  <img src="assets/tool-search-demo.gif" alt="OpenStellar Tool Search in Action" width="100%" />
-</p>
+## How It Works in Practice
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐

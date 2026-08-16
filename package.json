@@ -13,8 +13,7 @@
   "files": [
     "dist",
     "README.md",
-    "INSTALL_PROMPT.md",
-    "assets"
+    "INSTALL_PROMPT.md"
   ],
   "scripts": {
     "build": "tsc && rollup -c rollup.dts.config.mjs && node esbuild.config.mjs && rm -rf dist/src",
