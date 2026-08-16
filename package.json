@@ -13,7 +13,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "INSTALL_PROMPT.md",
+    "assets"
   ],
   "scripts": {
     "build": "tsc && rollup -c rollup.dts.config.mjs && node esbuild.config.mjs && rm -rf dist/src",
@@ -31,7 +32,7 @@
     "deferred-loading"
   ],
   "author": "OpenStellar",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/open-stl/openstellar-tool-search.git"

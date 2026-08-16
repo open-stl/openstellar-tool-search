@@ -3,7 +3,6 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@openstellar/tool-search"><img src="https://img.shields.io/npm/v/@openstellar/tool-search.svg?style=flat-square&color=blue" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/@openstellar/tool-search"><img src="https://img.shields.io/npm/dm/@openstellar/tool-search.svg?style=flat-square" alt="npm downloads" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" alt="License: MIT" /></a>
   <a href="INSTALL_PROMPT.md"><img src="https://img.shields.io/badge/🤖_Install_with-AI_Prompt-blueviolet.svg?style=flat-square" alt="Install with AI Prompt" /></a>
 </p>
 
@@ -34,7 +33,6 @@
 - [Architecture & MCP Prewarming](#architecture--mcp-prewarming)
 - [Troubleshooting](#troubleshooting)
 - [Development & Verification](#development--verification)
-- [License](#license)
 
 ---
 
@@ -327,11 +325,3 @@ npm run build
 # Run isolated npm pack and load smoke test
 npm run smoke:plugin
 ```
-
----
-
-## License
-
-MIT © 2026 OpenStellar
-
-`SPDX-License-Identifier: MIT` — see [LICENSE](LICENSE).
