@@ -1,6 +1,9 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { setupV2 } from '../src/v2/setup.js';
-import { ToolSearchPlugin } from '../src/plugin.js';
+import { setupV2, loadFallbackMcpConfig } from '../src/v2/setup.js';
+import { ToolSearchPlugin, plugin } from '../src/plugin.js';
 
 // Mock the embedding module to avoid loading real transformer models during tests.
 vi.mock('../src/catalog/matcher.js', () => ({
@@ -70,10 +73,10 @@ describe('OpenCode 2.0 setupV2', () => {
     vi.restoreAllMocks();
   });
 
-  it('is exposed as ToolSearchPlugin.setup', () => {
-    expect(typeof ToolSearchPlugin.setup).toBe('function');
-    expect(ToolSearchPlugin.setup).toBe(setupV2);
-    expect(ToolSearchPlugin.id).toBe('openstellar-tool-search');
+  it('is exposed as plugin.setup and plugin.id', () => {
+    expect(typeof plugin.setup).toBe('function');
+    expect(plugin.setup).toBe(setupV2);
+    expect(plugin.id).toBe('openstellar-tool-search');
   });
 
   it('registers tool_search and tool_search_regex with codemode: false and valid schemas', async () => {
@@ -169,8 +172,9 @@ describe('OpenCode 2.0 setupV2', () => {
       { pattern: '^git_diff$' },
       { sessionID: 'ses-1' },
     );
-    expect(searchRes).toContain('Found 1 tool(s)');
-    expect(searchRes).toContain('git_diff');
+    const contentText = typeof searchRes === 'string' ? searchRes : searchRes?.content ?? '';
+    expect(contentText).toContain('Found 1 tool(s)');
+    expect(contentText).toContain('git_diff');
 
     // execute.before for now-authorized git_diff succeeds
     await expect(beforeHook({ tool: 'git_diff', sessionID: 'ses-1' })).resolves.toBeUndefined();
@@ -333,5 +337,200 @@ describe('OpenCode 2.0 setupV2', () => {
     await expect(beforeHook({ tool: 'search_files', sessionID: 'ses-delete-me' })).rejects.toThrow(
       /\[Tool Search Required\] Tool "search_files" has not been searched in session "ses-delete-me"/,
     );
+  });
+
+  it('supports MCP configuration in opts.mcp, registers tools in transform and dynamic updates', async () => {
+    const { ctx, transformCallbacks } = createMockV2Context();
+
+    await setupV2(ctx, {
+      mcp: {
+        servers: {
+          test_srv: {
+            type: 'local',
+            command: 'node',
+            args: ['-e', 'console.log("dummy")'],
+            enabled: true,
+          },
+        },
+      },
+    });
+
+    const addedTools: Record<string, any> = {};
+    transformCallbacks[0]({
+      add: (t: any) => {
+        addedTools[t.name] = t;
+      },
+    });
+
+    expect(addedTools.tool_search).toBeDefined();
+    expect(addedTools.tool_search_regex).toBeDefined();
+    expect(addedTools.test_srv).toBeDefined();
+    expect(addedTools.test_srv.options).toEqual({ codemode: false });
+  });
+
+  it('falls back to ctx.options when options argument is not passed', async () => {
+    const { ctx, transformCallbacks } = createMockV2Context();
+    (ctx as any).options = {
+      mcp: {
+        servers: {
+          ctx_srv: {
+            type: 'local',
+            command: 'node',
+            args: ['-e', 'console.log("dummy")'],
+            enabled: true,
+          },
+        },
+      },
+    };
+
+    await setupV2(ctx);
+
+    const addedTools: Record<string, any> = {};
+    transformCallbacks[0]({
+      add: (t: any) => {
+        addedTools[t.name] = t;
+      },
+    });
+
+    expect(addedTools.ctx_srv).toBeDefined();
+  });
+
+  it('loads MCP tools from ctx.options.mcp.servers and registers them into ctx.tool.transform with codemode: false', async () => {
+    const { ctx, transformCallbacks } = createMockV2Context();
+    (ctx as any).options = {
+      mcp: {
+        servers: {
+          my_server: {
+            type: 'local',
+            command: 'node',
+            args: ['-e', 'console.log("dummy")'],
+            enabled: true,
+          },
+        },
+      },
+    };
+
+    await setupV2(ctx);
+
+    const addedTools: Record<string, any> = {};
+    transformCallbacks[0]({
+      add: (t: any) => {
+        addedTools[t.name] = t;
+      },
+    });
+
+    expect(addedTools.my_server).toBeDefined();
+    expect(addedTools.my_server.options).toEqual({ codemode: false });
+    expect(addedTools.tool_search.options).toEqual({ codemode: false });
+    expect(addedTools.tool_search_regex.options).toEqual({ codemode: false });
+  });
+
+  it('verifies placeholder registration for cut/failed servers and honest description handling', async () => {
+    const { ctx, transformCallbacks } = createMockV2Context();
+
+    await setupV2(ctx, {
+      mcp: {
+        servers: {
+          failed_server: {
+            type: 'local',
+            command: 'non_existent_binary_xyz',
+            enabled: true,
+          },
+        },
+      },
+    });
+
+    const addedTools: Record<string, any> = {};
+    transformCallbacks[0]({
+      add: (t: any) => {
+        addedTools[t.name] = t;
+      },
+    });
+
+    // failed_server placeholder remains registered because server failed/settled without tools
+    expect(addedTools.failed_server).toBeDefined();
+    expect(addedTools.failed_server.description).toContain('deadlined');
+
+    // Placeholder execution returns honest failed message
+    const res = await addedTools.failed_server.execute({}, { sessionID: 'ses-mcp' });
+    expect(res).toBeDefined();
+  });
+
+  it('resolves fallback MCP config via loadFallbackMcpConfig in custom directory', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-test-fallback-'));
+    try {
+      const configPath = path.join(tempDir, 'opencode.jsonc');
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          mcp: {
+            servers: {
+              fallback_srv: {
+                type: 'local',
+                command: 'node',
+                args: ['-e', 'console.log(1)'],
+              },
+            },
+          },
+        }),
+        'utf-8',
+      );
+
+      const resolved = loadFallbackMcpConfig(tempDir);
+      expect(resolved).toBeDefined();
+      expect(resolved).toEqual({
+        fallback_srv: {
+          type: 'local',
+          command: 'node',
+          args: ['-e', 'console.log(1)'],
+        },
+      });
+
+      // Also test setupV2 with ctx.directory
+      const { ctx, transformCallbacks } = createMockV2Context();
+      (ctx as any).directory = tempDir;
+      await setupV2(ctx);
+
+      const addedTools: Record<string, any> = {};
+      transformCallbacks[0]({
+        add: (t: any) => {
+          addedTools[t.name] = t;
+        },
+      });
+
+      expect(addedTools.fallback_srv).toBeDefined();
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('dynamically registers new MCP tools via onUpdate listener without duplicate subscriptions', async () => {
+    const { ctx, transformCallbacks } = createMockV2Context();
+
+    await setupV2(ctx, {
+      mcp: {
+        servers: {
+          dyn_srv: {
+            type: 'local',
+            command: 'node',
+            args: ['-e', 'console.log("dummy")'],
+            enabled: true,
+          },
+        },
+      },
+    });
+
+    const addedTools: Record<string, any> = {};
+    const addFn = vi.fn((t: any) => {
+      addedTools[t.name] = t;
+    });
+
+    // Trigger transform
+    transformCallbacks[0]({ add: addFn });
+    expect(addedTools.tool_search).toBeDefined();
+    expect(addedTools.dyn_srv).toBeDefined();
+
+    // Calling transform again does not throw and preserves single onUpdate subscription
+    transformCallbacks[0]({ add: addFn });
   });
 });

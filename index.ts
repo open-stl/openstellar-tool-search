@@ -1,7 +1,5 @@
-import { ToolSearchPlugin } from './src/plugin.js';
+import { ToolSearchPlugin, plugin } from './src/plugin.js';
 
-export const plugin = ToolSearchPlugin;
-
-export { ToolSearchPlugin };
+export { ToolSearchPlugin, plugin };
 export default plugin;
 export type { ToolMeta, ScoreParams, ToolSearchConfig, Hit } from './src/types.js';

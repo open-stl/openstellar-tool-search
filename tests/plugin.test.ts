@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ToolSearchPlugin } from '../src/plugin.js';
+import { ToolSearchPlugin, plugin } from '../src/plugin.js';
 import { ToolVault } from '../src/catalog/vault.js';
 import { AuthPersistence } from '../src/engine/auth-persistence.js';
 import type { PersistedToolAuthorization } from '../src/engine/auth-persistence.js';
@@ -38,9 +38,9 @@ describe('ToolSearchPlugin', () => {
     vi.restoreAllMocks();
   });
 
-  it('exports a plugin function', () => {
+  it('exports a plugin function and v2 plugin object', () => {
     expect(typeof ToolSearchPlugin).toBe('function');
-    expect(ToolSearchPlugin.id).toBe('openstellar-tool-search');
+    expect(plugin.id).toBe('openstellar-tool-search');
   });
 
   it('stores raw parameters without JSON cloning', async () => {

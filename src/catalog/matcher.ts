@@ -87,6 +87,8 @@ export class SemanticMatcher {
   }
 
   async open(): Promise<void> {
+    if (!this.cfg.enabled) return;
+
     if (this.isWorkerEnabled) {
       if (this.workerReady) return;
       if (this.workerInitFailed || this.loadError) return;

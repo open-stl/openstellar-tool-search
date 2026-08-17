@@ -166,6 +166,38 @@ describe('AuthorizationState & AuthPersistence', () => {
     state.resetSession('sess-1');
     expect(state.isAuthorized('sess-1', 'tool_a')).toBe(false);
   });
+
+  it('handles hyphens and underscores interchangeably for authorization and reminders', () => {
+    const persistence = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
+    const state = new AuthorizationState({
+      alwaysOn: ['always-on_tool'],
+      resetTools: ['compress'],
+      persistence,
+    });
+
+    state.registerTool('codebase-memory_list_projects');
+
+    // Always-on check works across hyphens and underscores
+    expect(state.requiresReminder('sess-1', 'always_on_tool', 'always-on_tool')).toBe(false);
+
+    // Initial state: not authorized
+    expect(state.isAuthorized('sess-1', 'codebase_memory_list_projects')).toBe(false);
+    expect(state.isAuthorized('sess-1', 'codebase-memory_list_projects')).toBe(false);
+    expect(state.requiresReminder('sess-1', 'codebase_memory_list_projects', 'codebase-memory_list_projects')).toBe(true);
+
+    // Authorize using the catalog ID (with hyphen)
+    state.authorize('sess-1', [{ id: 'codebase-memory_list_projects', description: 'List projects', parameters: {} }]);
+
+    // Both snake_case and kebab-case are recognized as authorized
+    expect(state.isAuthorized('sess-1', 'codebase_memory_list_projects')).toBe(true);
+    expect(state.isAuthorized('sess-1', 'codebase-memory_list_projects')).toBe(true);
+    expect(state.requiresReminder('sess-1', 'codebase_memory_list_projects', 'codebase-memory_list_projects')).toBe(false);
+    expect(state.requiresReminder('sess-1', 'codebase-memory_list_projects', 'codebase-memory_list_projects')).toBe(false);
+
+    // Revoke using snake_case ID revokes the normalized authorization
+    state.revoke('sess-1', ['codebase_memory_list_projects']);
+    expect(state.isAuthorized('sess-1', 'codebase-memory_list_projects')).toBe(false);
+  });
 });
 
 // ============================================================================

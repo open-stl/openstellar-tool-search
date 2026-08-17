@@ -8,6 +8,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./server": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
     }
   },
   "files": [
@@ -19,6 +23,8 @@
     "build": "tsc && rollup -c rollup.dts.config.mjs && node esbuild.config.mjs && rm -rf dist/src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "bench": "node scripts/benchmark-thesis.mjs",
+    "bench:ci": "node scripts/benchmark-thesis.mjs --ci",
     "prepublishOnly": "npm run build",
     "smoke:plugin": "node scripts/smoke-plugin-load.mjs"
   },

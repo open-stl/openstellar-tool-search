@@ -277,7 +277,16 @@ export class DeliveryHistory {
   isNewDiscovery(sessionID: string, canonicalID: string, fingerprint: string): boolean {
     const session = this.history.get(sessionID);
     if (!session) return true;
-    const existing = session.get(canonicalID);
+    let existing = session.get(canonicalID);
+    if (!existing) {
+      const norm = canonicalID.replace(/[-_]/g, '_');
+      for (const [key, val] of session.entries()) {
+        if (key.replace(/[-_]/g, '_') === norm) {
+          existing = val;
+          break;
+        }
+      }
+    }
     if (!existing) return true;
     return existing !== fingerprint;
   }
@@ -317,8 +326,12 @@ export class DeliveryHistory {
   remove(sessionID: string, canonicalIDs: Iterable<string>): void {
     const session = this.history.get(sessionID);
     if (!session) return;
-    for (const id of canonicalIDs) {
-      session.delete(id);
+    const toRemove = new Set(canonicalIDs);
+    const toRemoveNorm = new Set(Array.from(canonicalIDs).map((id) => id.replace(/[-_]/g, '_')));
+    for (const id of Array.from(session.keys())) {
+      if (toRemove.has(id) || toRemoveNorm.has(id.replace(/[-_]/g, '_'))) {
+        session.delete(id);
+      }
     }
     if (session.size === 0) {
       this.history.delete(sessionID);

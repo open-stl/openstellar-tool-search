@@ -52,6 +52,7 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     maxResults,
     deferLabel,
     embedding: buildEmbedding(isKeywordMode),
+    notify: (title, message, variant, duration) => toast(ctx, title, message, variant, duration),
   });
 
   const mcp = new McpWiring(
@@ -175,11 +176,13 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
   return hooks;
 };
 
-export const ToolSearchPlugin = Object.assign(ToolSearchPluginImpl, {
-  id: 'openstellar-tool-search',
-  setup: setupV2,
-  server: ToolSearchPluginImpl,
-});
+export const ToolSearchPlugin = ToolSearchPluginImpl;
 
-export const plugin = ToolSearchPlugin;
-export default ToolSearchPlugin;
+export const plugin = {
+  id: 'openstellar-tool-search',
+  server: ToolSearchPluginImpl,
+  setup: setupV2,
+};
+
+export default plugin;
+

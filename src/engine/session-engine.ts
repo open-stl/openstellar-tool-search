@@ -3,9 +3,7 @@ import { tool } from '@opencode-ai/plugin';
 import { ToolVault } from '../catalog/vault.js';
 import type { EmbedConfig } from '../types.js';
 import { SessionToolRegistry } from './session-tool-registry.js';
-import { toast } from '../hooks/toast.js';
-import { truncateDescription } from '../hooks/deferral.js';
-import { normalizeParameters } from '../catalog/schema-normalize.js';
+import { normalizeParameters, truncateDescription } from '../catalog/schema-normalize.js';
 
 export const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
 export const DEFAULT_DEFER = '[deferred]';
@@ -14,19 +12,19 @@ const SEARCH_TIMEOUT_MS = 2000;
 const MAX_QUERY_LENGTH = 500;
 /**
  * Second-phase budget granted when the first phase found no hits while the
- * catalog was still warming up: gives a slow-but-alive MCP server time to
+ * Tool Vault was still warming up: gives a slow-but-alive MCP server time to
  * finish its handshake before the search reports the tool as missing.
  */
 const EXTENDED_WAIT_MS = 3000;
 
 /**
  * Returned instead of "No matches ..." when a search found no hits and the
- * catalog is still warming up: a negative result at this point would be read
+ * Tool Vault is still warming up: a negative result at this point would be read
  * by the model as "the tool does not exist", when in truth the MCP servers
  * simply have not finished their handshake yet.
  */
 export const WARMING_MESSAGE =
-  'Tool catalog still warming up (MCP servers not ready after ~5s). The tool may exist — retry this search in a few seconds.';
+  'Tool Vault still warming up (MCP servers not ready after ~5s). The tool may exist — retry this search in a few seconds.';
 
 /**
  * Strips line breaks from the defer label before it is interpolated into
@@ -43,6 +41,7 @@ interface SessionEngineOptions {
   maxResults: number;
   deferLabel: string;
   embedding: EmbedConfig;
+  notify?: (title: string, message: string, variant?: 'info' | 'warning' | 'error', duration?: number) => void;
 }
 
 interface SystemPromptState {
@@ -55,7 +54,7 @@ interface SystemPromptState {
 /**
  * Core session engine for the tool-search plugin.
  *
- * Owns the tool catalog (ToolVault), the per-session authorization and
+ * Owns the Tool Vault (ToolVault), the per-session authorization and
  * delivery state (SessionToolRegistry), and the deferred-tool bookkeeping
  * surfaced to the model prompt. Exposes the search tools the plugin wires
  * into OpenCode, plus the operations the plugin hooks delegate to.
@@ -67,6 +66,7 @@ export class SessionEngine {
   public readonly deferLabel: string;
   private readonly maxResults: number;
   private readonly useWorker: boolean;
+  private readonly notify?: (title: string, message: string, variant?: 'info' | 'warning' | 'error', duration?: number) => void;
   private alerted = false;
 
   public constructor(
@@ -76,6 +76,7 @@ export class SessionEngine {
     this.maxResults = options.maxResults;
     this.deferLabel = sanitizeDeferLabel(options.deferLabel);
     this.useWorker = options.embedding.useWorker ?? false;
+    this.notify = options.notify;
     this.vault = new ToolVault({ embedding: options.embedding });
     this.sessionRegistry = new SessionToolRegistry({
       alwaysOn: options.alwaysOn,
@@ -137,8 +138,7 @@ export class SessionEngine {
     const buildPromise = this.useWorker ? this.vault.prebuildSemantic() : undefined;
     if (buildPromise) {
       buildPromise.catch((err: unknown) => {
-        toast(
-          this.ctx,
+        this.notify?.(
           'Tool Search',
           `Semantic search unavailable (${err instanceof Error ? err.message : 'unknown error'}). Falling back to keyword search.`,
           'warning',

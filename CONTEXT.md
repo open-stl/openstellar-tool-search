@@ -43,3 +43,19 @@ _Avoid_: tool catalog, cache, index store
 **Dual Search**:
 The complementary discovery interface combining semantic/BM25 task discovery (`tool_search`) and exact/pattern ID matching (`tool_search_regex`).
 _Avoid_: hybrid search, regex tool
+
+**Tool Bloat Tax**:
+The persistent computational, attention, and economic overhead induced by statically injecting complete, unused JSON tool schemas into every generation prompt turn.
+_Avoid_: token waste, schema bloat, context cost
+
+**Parameter-to-Description Ratio (PDR)**:
+The structural ratio quantifying tool schema asymmetry: tokens consumed by parameter properties versus tokens consumed by unstructured prose descriptions.
+_Avoid_: schema ratio, token split
+
+**Deferred Tool Virtualization**:
+The runtime mechanism transforming static tool declarations into single-sentence `[deferred]` placeholders while isolating full schemas out-of-band in the Tool Vault.
+_Avoid_: lazy loading, stubbing, proxy tools
+
+**Dual Context Optimization Theorem**:
+The architectural principle establishing that Tool Search optimizes first-order static prompt bloat ($\mathcal{O}(T)$), which must be paired with message compaction (`compress`) to bound second-order conversation history accumulation ($\mathcal{O}(T^2)$).
+_Avoid_: compound savings, double compression

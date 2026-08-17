@@ -1,7 +1,7 @@
 # Repository Atlas: @openstellar/tool-search
 
 ## Project Responsibility
-`@openstellar/tool-search` is an on-demand tool search and deferred loading plugin for OpenCode, supporting both OpenCode 1.x and OpenCode 2.0 (`opencode2`) via a dual-compatibility architecture. It dramatically reduces initial LLM context consumption and prompt bloat by stripping full parameter schemas from inactive tool definitions, deferring them behind lightweight placeholders (`[deferred]`), and providing high-precision hybrid search discovery (`tool_search` via BM25 + ONNX dense vector embeddings + RRF ranking, and `tool_search_regex` via regex filtering).
+`@openstellar/tool-search` is an on-demand tool search and deferred loading plugin for OpenCode, supporting both OpenCode 1.x and OpenCode 2.0 (`opencode2`) via a dual-compatibility architecture. It dramatically reduces initial LLM context consumption and prompt bloat by stripping full parameter schemas from inactive tool definitions, deferring them behind lightweight placeholders (`[deferred]`), and providing high-precision Dual Search discovery (`tool_search` via BM25 + ONNX dense vector embeddings + RRF ranking, and `tool_search_regex` via regex filtering).
 
 The plugin manages per-session authorization state machines, tool delivery deduplication, MCP client connections (local stdio and remote HTTP transports), schema normalization (dereferencing `$ref` and converting Effect-TS ASTs), and automatic background update checks with package cache invalidation.
 

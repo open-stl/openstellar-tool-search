@@ -31,6 +31,10 @@ function canonicalIdOf(value: PersistedToolAuthorization): string | undefined {
   return value.kind === 'canonical-tool' && value.version === 1 ? value.canonicalId : undefined;
 }
 
+function normalizeToolId(id: string): string {
+  return id.replace(/[-_]/g, '_');
+}
+
 /**
  * F11 migration: convert legacy string-typed entries to canonical object form.
  * - "@canonical:foo" -> { kind: 'canonical-tool', version: 1, canonicalId: 'foo' }
@@ -118,8 +122,10 @@ export class AuthorizationState {
     if (!sessionID) return false;
     const authorized = this.authorizations.get(sessionID);
     if (!authorized) return false;
+    const normTarget = normalizeToolId(canonicalID);
     return Array.from(authorized).some((value) => {
-      return canonicalIdOf(value) === canonicalID;
+      const id = canonicalIdOf(value);
+      return id !== undefined && (id === canonicalID || normalizeToolId(id) === normTarget);
     });
   }
 
@@ -127,20 +133,45 @@ export class AuthorizationState {
     // F2 fix: only compare executedID and canonicalID against alwaysOn — NOT baseID.
     // Stripping _ide from executedID would falsely exempt foo_ide when the
     // separate tool foo happens to be alwaysOn.
-    if (this.alwaysOn.has(executedID) || this.alwaysOn.has(canonicalID)) return false;
+    const isAlwaysOn = (id: string) => {
+      if (this.alwaysOn.has(id)) return true;
+      const norm = normalizeToolId(id);
+      for (const a of this.alwaysOn) {
+        if (normalizeToolId(a) === norm) return true;
+      }
+      return false;
+    };
+
+    if (isAlwaysOn(executedID) || isAlwaysOn(canonicalID)) return false;
+
     // baseID is still needed for the deferred-tools and authorization checks so
     // that double-cloaked IDs like bash_ide_ide (canonicalID stays 'bash_ide_ide'
     // because resolveAlias only strips one _ide suffix) are still gated when
     // the underlying tool bash is deferred.
     const baseID = executedID.replace(/(_ide)+$/, '');
-    const targetID = this.deferredTools.has(canonicalID) ? canonicalID : baseID;
-    if (!this.deferredTools.has(executedID) && !this.deferredTools.has(canonicalID) && !this.deferredTools.has(baseID)) return false;
+
+    const isDeferred = (id: string) => {
+      if (this.deferredTools.has(id)) return true;
+      const norm = normalizeToolId(id);
+      for (const d of this.deferredTools) {
+        if (normalizeToolId(d) === norm) return true;
+      }
+      return false;
+    };
+
+    const targetID = this.deferredTools.has(canonicalID) || isDeferred(canonicalID) ? canonicalID : baseID;
+    const normTarget = normalizeToolId(targetID);
+    const normCanon = normalizeToolId(canonicalID);
+
+    if (!isDeferred(executedID) && !isDeferred(canonicalID) && !isDeferred(baseID)) return false;
     if (!sessionID) return true;
     const authorized = this.authorizations.get(sessionID);
     return authorized === undefined
       || !Array.from(authorized).some((value) => {
         const id = canonicalIdOf(value);
-        return id === targetID || id === canonicalID;
+        if (!id) return false;
+        const normId = normalizeToolId(id);
+        return id === targetID || id === canonicalID || normId === normTarget || normId === normCanon;
       });
   }
 
@@ -161,9 +192,10 @@ export class AuthorizationState {
     const authorized = this.authorizations.get(sessionID);
     if (!authorized) return;
     const toRemove = new Set(toolIDs);
+    const toRemoveNorm = new Set(Array.from(toolIDs).map(normalizeToolId));
     for (const value of Array.from(authorized)) {
       const id = canonicalIdOf(value);
-      if (id && toRemove.has(id)) {
+      if (id && (toRemove.has(id) || toRemoveNorm.has(normalizeToolId(id)))) {
         authorized.delete(value);
       }
     }

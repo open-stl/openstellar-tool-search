@@ -6,29 +6,29 @@ import type { McpServerConfig } from '../mcp/types.js';
 import type { ToolDefinition } from '../catalog/tool-provider.js';
 
 /**
- * Description for a warming-up server's placeholder tool. Echoes the
+ * Description for a warming server's placeholder tool. Echoes the
  * WARMING_MESSAGE vocabulary so the model knows the server's tools are not
  * available yet but WILL be — and to find them via tool_search when ready.
  */
 function PLACEHOLDER_DESC(name: string): string {
-  return `MCP server "${name}" is still starting up — its tools are not available yet. Retry in a few seconds; when ready, use tool_search to find them.`;
+  return `MCP server "${name}" is warming — its tools are not available yet. Retry in a few seconds; when ready, use tool_search to find them.`;
 }
 
 /** Response a placeholder tool returns when invoked (retry guidance; never throws). */
-const SERVER_STARTING_RESPONSE =
-  'This MCP server is still starting up. Its tools are not available yet — retry this call in a few seconds, or use tool_search to discover them once ready.';
+const SERVER_WARMING_RESPONSE =
+  'This MCP server is warming. Its tools are not available yet — retry this call in a few seconds, or use tool_search to discover them once ready.';
 
 /** Response when the placeholder's server settled with tools. */
-const SERVER_READY_RESPONSE = (name: string) =>
-  `MCP server "${name}" is ready — use tool_search to find its tools.`;
+const SERVER_SETTLED_RESPONSE = (name: string) =>
+  `MCP server "${name}" is settled — use tool_search to find its tools.`;
 
-/** Response when the placeholder's server failed to start (deadline elapsed). */
-const SERVER_FAILED_RESPONSE = (name: string) =>
-  `MCP server "${name}" failed to start (no response within the timeout). Its tools are unavailable in this session.`;
+/** Response when the placeholder's server deadlined (deadline elapsed). */
+const SERVER_DEADLINED_RESPONSE = (name: string) =>
+  `MCP server "${name}" is deadlined (no response within the timeout). Its tools are unavailable in this session.`;
 
-/** Description for a placeholder whose server settled empty (cut/failed/no tools). */
-const SERVER_FAILED_DESC = (name: string) =>
-  `MCP server "${name}" failed to start (no response within the timeout). Its tools are unavailable in this session.`;
+/** Description for a placeholder whose server settled empty (cut/deadlined/no tools). */
+const SERVER_DEADLINED_DESC = (name: string) =>
+  `MCP server "${name}" is deadlined (no response within the timeout). Its tools are unavailable in this session.`;
 
 const activeMcpProviders = new Set<McpToolProvider>();
 let mcpExitHandlerRegistered = false;
@@ -71,7 +71,7 @@ function registerGlobalMcpExitHandler(): void {
  * still-starting / failed, never proxies to the MCP server.
  */
 export class McpWiring {
-  private provider: McpToolProvider | null = null;
+  private _provider: McpToolProvider | null = null;
   /** Placeholder tool ids (raw server names) registered while a server warms. */
   private placeholders = new Set<string>();
   private preWarmPromise: Promise<void> | null = null;
@@ -84,11 +84,15 @@ export class McpWiring {
   ) {}
 
   public get isInitialized(): boolean {
-    return this.provider !== null;
+    return this._provider !== null;
+  }
+
+  public get provider(): McpToolProvider | null {
+    return this._provider;
   }
 
   public init(mcpConfig: Record<string, McpServerConfig> | McpServerConfig[]): void {
-    if (this.provider) return;
+    if (this._provider) return;
     // timeout is the PER-SERVER CEILING: each server must settle within it
     // or is cut (fail-open + console.warn). Wait-all means the factory returns
     // only after every server settled or was cut.
@@ -96,7 +100,7 @@ export class McpWiring {
     // Registration is synchronous (the provider has no tools until warm-up
     // completes), so startup never awaits the MCP handshake.
     void this.vault.registerProvider(mcpProvider);
-    this.provider = mcpProvider;
+    this._provider = mcpProvider;
 
     // Register a placeholder tool for every ENABLED server BEFORE warm-up
     // kicks off. This is the slow-server visibility fix: the model's FIRST
@@ -136,17 +140,17 @@ export class McpWiring {
       const name = server.name ?? 'unnamed';
       if (this.placeholders.has(name)) continue;
       this.placeholders.add(name);
-      const provider = this.provider;
+      const provider = this._provider;
       const placeholder = tool({
         description: PLACEHOLDER_DESC(name),
         args: {},
         async execute() {
-          if (!provider) return SERVER_STARTING_RESPONSE;
+          if (!provider) return SERVER_WARMING_RESPONSE;
           const hasTools = provider.getTools().some((t) => t.id.startsWith(`${name}_`));
-          if (hasTools) return SERVER_READY_RESPONSE(name);
+          if (hasTools) return SERVER_SETTLED_RESPONSE(name);
           const settled = await provider.awaitReady(0);
-          if (settled) return SERVER_FAILED_RESPONSE(name);
-          return SERVER_STARTING_RESPONSE;
+          if (settled) return SERVER_DEADLINED_RESPONSE(name);
+          return SERVER_WARMING_RESPONSE;
         },
       });
       this.vault.add(name, PLACEHOLDER_DESC(name), {});
@@ -163,14 +167,14 @@ export class McpWiring {
    *     handleProviderUpdate — they settled pre-snapshot).
    *   - else (server settled empty — cut at ceiling, errored, or returned no
    *     tools) → KEEP the placeholder as a STATUS READER and RE-DESCRIBE it
-   *     with the honest status text (failed-to-start / no tools), so the
-   *     model's snapshot description is truthful, not "still starting up".
+   *     with the honest status text (deadlined / no tools), so the
+   *     model's snapshot description is truthful, not "warming".
    *     It is the only stable entry point in the frozen session snapshot.
    */
   private async finalizePlaceholders(): Promise<void> {
-    if (!this.provider) return;
+    if (!this._provider) return;
     for (const id of Array.from(this.placeholders)) {
-      const hasTools = this.provider.getTools().some((t) => t.id.startsWith(`${id}_`));
+      const hasTools = this._provider.getTools().some((t) => t.id.startsWith(`${id}_`));
       if (hasTools) {
         delete this.tools[id];
         this.vault.remove(id);
@@ -180,16 +184,17 @@ export class McpWiring {
       // Settled empty (or config-hook edge still warming): re-describe the
       // placeholder with the honest status. If still warming (awaitReady(0)
       // false — only possible via the config-hook path, since wait-all blocks
-      // the factory), keep "still starting up"; otherwise the server is
-      // settled-without-tools → failed/no-tools text. (If the provider lacks
+      // the factory), keep "warming"; otherwise the server is
+      // settled-without-tools → deadlined text. (If the provider lacks
       // awaitReady — e.g. a test mock — treat it as settled.)
-      const settled = typeof this.provider.awaitReady === 'function'
-        ? await this.provider.awaitReady(0)
+      const settled = typeof this._provider.awaitReady === 'function'
+        ? await this._provider.awaitReady(0)
         : true;
-      const statusDesc = settled ? SERVER_FAILED_DESC(id) : PLACEHOLDER_DESC(id);
+      const statusDesc = settled ? SERVER_DEADLINED_DESC(id) : PLACEHOLDER_DESC(id);
       if (this.tools[id]) {
         this.tools[id].description = statusDesc;
       }
+      this.vault.add(id, statusDesc, {});
     }
   }
 
@@ -211,8 +216,8 @@ export class McpWiring {
    */
   private handleProviderUpdate(providerTools: ToolDefinition[]): void {
     this.sessionRegistry.registerProviderTools(providerTools);
-    if (typeof this.provider?.getExecutableTools !== 'function') return;
-    const execs = this.provider.getExecutableTools();
+    if (typeof this._provider?.getExecutableTools !== 'function') return;
+    const execs = this._provider.getExecutableTools();
     for (const pt of providerTools) {
       const execTool = execs[pt.id];
       if (!execTool) continue;
@@ -239,7 +244,7 @@ export class McpWiring {
    */
   public preWarm(): Promise<void> {
     if (this.preWarmPromise) return this.preWarmPromise;
-    const provider = this.provider;
+    const provider = this._provider;
     if (!provider) return Promise.resolve();
     this.preWarmPromise = (async () => {
       try {

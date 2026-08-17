@@ -19,7 +19,7 @@ function extractParamTexts(schema: unknown, prefix = ''): string[] {
 }
 
 /**
- * Deep module that owns tool catalog storage, alias resolution (`_ide` suffix),
+ * Deep module that owns Tool Vault storage, alias resolution (`_ide` suffix),
  * parameter text extraction, and regex searching (`grep`).
  */
 export class ToolStore {
@@ -83,7 +83,10 @@ export class ToolStore {
     const hits: ToolMeta[] = [];
     for (const item of this.store.values()) {
       re.lastIndex = 0;
-      const matchesId = re.test(item.id);
+      const matchesId =
+        re.test(item.id) ||
+        re.test(item.id.replace(/[-_]/g, '_')) ||
+        re.test(item.id.replace(/[-_]/g, '-'));
       re.lastIndex = 0;
       const matchesDesc = re.test(item.description);
       if (matchesId || matchesDesc) {

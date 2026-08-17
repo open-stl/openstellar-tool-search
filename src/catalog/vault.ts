@@ -1,27 +1,27 @@
 import type { ToolMeta, ScoreParams, EmbedConfig } from '../types.js';
 import type { ToolProvider } from './tool-provider.js';
 import { ToolStore } from './tool-store.js';
-import { HybridSearchEngine } from './search-engine.js';
+import { DualSearchEngine } from './search-engine.js';
 
 /**
- * Single caller-facing seam for the tool catalog and search.
+ * Single caller-facing seam for the Tool Vault and search.
  *
- * ToolVault owns two deep modules behind it — `ToolStore` (catalog storage,
- * parameter text extraction, alias resolution) and `HybridSearchEngine`
+ * ToolVault owns two deep modules behind it — `ToolStore` (vault storage,
+ * parameter text extraction, alias resolution) and `DualSearchEngine`
  * (BM25, semantic matcher, RRF fusion, cascade gates) — and exposes only the
- * operations the plugin needs: ingest, await readiness, discover (hybrid
- * query or regex grep), resolve aliases, and semantic prebuild. Catalog
+ * operations the plugin needs: ingest, await readiness, discover (dual search
+ * query or regex grep), resolve aliases, and semantic prebuild. Vault
  * invalidation is centralized in the constructor wiring: every changed add
  * fires exactly one `engine.notifyChanged()`, so `add`/`registerProvider`
  * must not notify the engine again.
  */
 export class ToolVault {
   private store: ToolStore;
-  private engine: HybridSearchEngine;
+  private engine: DualSearchEngine;
 
   constructor(cfg: Partial<ScoreParams & { embedding?: EmbedConfig }> = {}) {
     this.store = new ToolStore();
-    this.engine = new HybridSearchEngine(this.store, cfg);
+    this.engine = new DualSearchEngine(this.store, cfg);
     this.store.onChanged(() => this.engine.notifyChanged());
   }
 

@@ -8,11 +8,11 @@ interface SearchEngineOptions extends Partial<ScoreParams> {
 }
 
 /**
- * Deep module that owns multi-tier search execution: BM25 TF-IDF scoring,
+ * Deep module that owns multi-tier dual search execution: BM25 TF-IDF scoring,
  * semantic worker vector embeddings, cascade score gating, RRF rank fusion,
  * ID-exact-match token boosting, and cold-index fast-pathing.
  */
-export class HybridSearchEngine {
+export class DualSearchEngine {
   private scorer: RankEngine<ToolMeta>;
   private scorerStale = true;
   private semantic: SemanticMatcher | undefined;
@@ -183,3 +183,6 @@ export class HybridSearchEngine {
     return [...injected, ...bm25].slice(0, limit);
   }
 }
+
+export { DualSearchEngine as HybridSearchEngine };
+
