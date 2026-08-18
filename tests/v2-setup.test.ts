@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { setupV2, loadFallbackMcpConfig } from '../src/v2/setup.js';
-import { ToolSearchPlugin, plugin } from '../src/plugin.js';
+import { plugin } from '../src/plugin.js';
 
 // Mock the embedding module to avoid loading real transformer models during tests.
 vi.mock('../src/catalog/matcher.js', () => ({

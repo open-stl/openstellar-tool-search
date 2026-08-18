@@ -1,0 +1,220 @@
+{
+  "metadata": {
+    "generatedAt": "2026-08-18T03:28:11.388Z",
+    "benchmarkStandard": "Information Retrieval (TREC/BEIR) & LLM Tool Virtualization Standard",
+    "corpusCatalogSize": 105,
+    "sampleSize": 10,
+    "queriesEvaluated": 10,
+    "pricingTier": "$2.50 / 1M Input Tokens"
+  },
+  "singleTurnContext": {
+    "totalBaselineTokens": 29831,
+    "totalDeferredTokens": 26114,
+    "netSavedTokensPerTurn": 3717,
+    "perTurnSavingsPct": "12.46%",
+    "avgTokensPerToolBaseline": 284,
+    "avgTokensPerToolDeferred": 249
+  },
+  "informationRetrievalMetrics": {
+    "ndcgAt1": 0.9143,
+    "ndcgAt3": {
+      "mean": 0.951,
+      "ci95Lower": 0.893,
+      "ci95Upper": 0.9917
+    },
+    "ndcgAt5": 0.951,
+    "meanReciprocalRank": {
+      "mean": 0.95,
+      "ci95Lower": 0.85,
+      "ci95Upper": 1
+    },
+    "meanAveragePrecision": {
+      "mean": 0.95,
+      "ci95Lower": 0.85,
+      "ci95Upper": 1
+    },
+    "hitRateAt1": "90.0%",
+    "hitRateAt3": "100.0%",
+    "hitRateAt5": "100.0%"
+  },
+  "searchLatencyProfile": {
+    "meanMs": 0.037,
+    "p50Ms": 0.036,
+    "p95Ms": 0.06,
+    "p99Ms": 0.06
+  },
+  "multiTurnCompoundingEconomics": [
+    {
+      "turn": 1,
+      "cumulativeBaselineTokens": 29831,
+      "cumulativeDeferredTokens": 26264,
+      "cumulativeSavedTokens": 3567,
+      "baselineCostUSD": 0.0746,
+      "deferredCostUSD": 0.0657,
+      "netSavingsUSD": 0.0089,
+      "reductionPercentage": 11.96
+    },
+    {
+      "turn": 5,
+      "cumulativeBaselineTokens": 156655,
+      "cumulativeDeferredTokens": 138820,
+      "cumulativeSavedTokens": 17835,
+      "baselineCostUSD": 0.3916,
+      "deferredCostUSD": 0.347,
+      "netSavingsUSD": 0.0446,
+      "reductionPercentage": 11.38
+    },
+    {
+      "turn": 10,
+      "cumulativeBaselineTokens": 332060,
+      "cumulativeDeferredTokens": 296390,
+      "cumulativeSavedTokens": 35670,
+      "baselineCostUSD": 0.8302,
+      "deferredCostUSD": 0.741,
+      "netSavingsUSD": 0.0892,
+      "reductionPercentage": 10.74
+    },
+    {
+      "turn": 20,
+      "cumulativeBaselineTokens": 739120,
+      "cumulativeDeferredTokens": 667780,
+      "cumulativeSavedTokens": 71340,
+      "baselineCostUSD": 1.8478,
+      "deferredCostUSD": 1.6695,
+      "netSavingsUSD": 0.1783,
+      "reductionPercentage": 9.65
+    },
+    {
+      "turn": 30,
+      "cumulativeBaselineTokens": 1221180,
+      "cumulativeDeferredTokens": 1114170,
+      "cumulativeSavedTokens": 107010,
+      "baselineCostUSD": 3.053,
+      "deferredCostUSD": 2.7854,
+      "netSavingsUSD": 0.2675,
+      "reductionPercentage": 8.76
+    },
+    {
+      "turn": 40,
+      "cumulativeBaselineTokens": 1778240,
+      "cumulativeDeferredTokens": 1635560,
+      "cumulativeSavedTokens": 142680,
+      "baselineCostUSD": 4.4456,
+      "deferredCostUSD": 4.0889,
+      "netSavingsUSD": 0.3567,
+      "reductionPercentage": 8.02
+    },
+    {
+      "turn": 50,
+      "cumulativeBaselineTokens": 2410300,
+      "cumulativeDeferredTokens": 2231950,
+      "cumulativeSavedTokens": 178350,
+      "baselineCostUSD": 6.0257,
+      "deferredCostUSD": 5.5799,
+      "netSavingsUSD": 0.4459,
+      "reductionPercentage": 7.4
+    },
+    {
+      "turn": 75,
+      "cumulativeBaselineTokens": 4318575,
+      "cumulativeDeferredTokens": 4051050,
+      "cumulativeSavedTokens": 267525,
+      "baselineCostUSD": 10.7964,
+      "deferredCostUSD": 10.1276,
+      "netSavingsUSD": 0.6688,
+      "reductionPercentage": 6.19
+    },
+    {
+      "turn": 100,
+      "cumulativeBaselineTokens": 6695600,
+      "cumulativeDeferredTokens": 6338900,
+      "cumulativeSavedTokens": 356700,
+      "baselineCostUSD": 16.739,
+      "deferredCostUSD": 15.8472,
+      "netSavingsUSD": 0.8918,
+      "reductionPercentage": 5.33
+    }
+  ],
+  "toolComplexityBreakdown": [
+    {
+      "name": "codebase_memory_query_graph",
+      "category": "graph",
+      "baselineTokens": 431,
+      "deferredTokens": 238,
+      "savedTokens": 193,
+      "reductionPct": 44.78
+    },
+    {
+      "name": "postman_searchPostmanElements",
+      "category": "api",
+      "baselineTokens": 520,
+      "deferredTokens": 476,
+      "savedTokens": 44,
+      "reductionPct": 8.46
+    },
+    {
+      "name": "pieces_search_memory",
+      "category": "memory",
+      "baselineTokens": 462,
+      "deferredTokens": 435,
+      "savedTokens": 27,
+      "reductionPct": 5.84
+    },
+    {
+      "name": "stitch_create_design_system",
+      "category": "design",
+      "baselineTokens": 461,
+      "deferredTokens": 416,
+      "savedTokens": 45,
+      "reductionPct": 9.76
+    },
+    {
+      "name": "codebase_memory_search_graph",
+      "category": "graph",
+      "baselineTokens": 261,
+      "deferredTokens": 211,
+      "savedTokens": 50,
+      "reductionPct": 19.16
+    },
+    {
+      "name": "agentmemory_memory_recall",
+      "category": "memory",
+      "baselineTokens": 144,
+      "deferredTokens": 133,
+      "savedTokens": 11,
+      "reductionPct": 7.64
+    },
+    {
+      "name": "context7_query_docs",
+      "category": "docs",
+      "baselineTokens": 118,
+      "deferredTokens": 122,
+      "savedTokens": -4,
+      "reductionPct": -3.39
+    },
+    {
+      "name": "github_grep_searchGitHub",
+      "category": "search",
+      "baselineTokens": 169,
+      "deferredTokens": 173,
+      "savedTokens": -4,
+      "reductionPct": -2.37
+    },
+    {
+      "name": "agentmemory_memory_save",
+      "category": "memory",
+      "baselineTokens": 125,
+      "deferredTokens": 129,
+      "savedTokens": -4,
+      "reductionPct": -3.2
+    },
+    {
+      "name": "sequential_thinking_sequentialthinking",
+      "category": "reasoning",
+      "baselineTokens": 150,
+      "deferredTokens": 154,
+      "savedTokens": -4,
+      "reductionPct": -2.67
+    }
+  ]
+}

@@ -8,6 +8,7 @@ The plugin manages per-session authorization state machines, tool delivery dedup
 ## System Entry Points & Root Assets
 - `src/plugin.ts`: Primary dual-target plugin entry point supporting OpenCode 1.x callable function interface and OpenCode 2.0 `{ id, setup }` structure.
 - `src/v2/setup.ts`: OpenCode 2.0 lifecycle adapter implementing tool transformations, execution hooks, session context synchronization, and event listeners.
+- `src/core/bootstrap.ts`: Shared plugin lifecycle bootstrapper (`bootstrapPluginCore`), config validation, fallback MCP loading, and logging.
 - `src/types.ts`: Core TypeScript definitions for configurations, search scoring, tool metadata (`ToolMeta`), hit structures (`Hit<T>`), and embedding settings.
 - `package.json`: Project manifest, dependency definitions (`@modelcontextprotocol/sdk`, `@xenova/transformers`, `effect`), and build scripts.
 - `esbuild.config.mjs`: Dual-target ESBuild bundling configuration producing ESM bundles for main runtime and isolated worker threads.
@@ -21,6 +22,7 @@ The plugin manages per-session authorization state machines, tool delivery dedup
 | Directory | Responsibility Summary | Detailed Map |
 | :--- | :--- | :--- |
 | `src/` | Plugin entry point, option validation, hook orchestration, and system-level coordination between engine, catalog, MCP, and host. | [View Map](src/codemap.md) |
+| `src/core/` | Shared core bootstrap (`bootstrapPluginCore`), configuration validation, JSONC parsing, fallback MCP loading, and logging. | [View Map](src/core/codemap.md) |
 | `src/v2/` | OpenCode 2.0 plugin lifecycle adapter, tool registration (`tool.transform`), execution hooks (`execute.before`, `execute.after`), and session context synchronization (`session.hook('context')`). | — |
 | `src/catalog/` | Centralized tool metadata catalog, schema normalization (`$ref` inlining, Effect-TS conversion), Okapi BM25 ranking, ONNX vector embeddings with worker-thread offloading, and Reciprocal Rank Fusion (RRF). | [View Map](src/catalog/codemap.md) |
 | `src/engine/` | Session runtime, state-machine authorization enforcement, content-addressable tool fingerprinting, delivery deduplication (Rule 41), context pruning synchronization, and persistence adapters. | [View Map](src/engine/codemap.md) |

@@ -2,10 +2,12 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ToolSearchPlugin, plugin } from '../src/plugin.js';
+import { plugin } from '../src/plugin.js';
 import { ToolVault } from '../src/catalog/vault.js';
 import { AuthPersistence } from '../src/engine/auth-persistence.js';
 import type { PersistedToolAuthorization } from '../src/engine/auth-persistence.js';
+
+const ToolSearchPlugin = plugin.server;
 
 // Track SemanticMatcher instantiation
 let matcherInstantiated = false;
