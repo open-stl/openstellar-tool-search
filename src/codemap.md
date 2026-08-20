@@ -31,7 +31,9 @@ The root `src/` directory serves as the core entry point and orchestration layer
 ## Integration Points
 - **OpenCode Framework (`@opencode-ai/plugin`)**: Subscribes to `Hooks`, `Plugin`, and `PluginOptions`.
 - **`src/core/bootstrap.ts`**: Shared plugin bootstrapper (`bootstrapPluginCore`), config validation, and fallback MCP resolution.
-- **`src/engine/session-engine.js`**: `SessionRuntime` managing Tool Vault instances, authorization state, and delivery history.
+- **`src/engine/session-engine.js`**: `SessionRuntime` (`SessionEngine`) managing canonical search tool specifications (`searchToolSpecs`), context turn application (`applyContextTurn`), session lifecycle events (`handleSessionEvent`), Tool Vault instances, authorization state, and delivery history.
+- **`src/catalog/transformers-env.js`**: Shared configuration helper (`configureTransformersEnv`) for Transformers/ONNX runtime log levels.
+- **`src/utils/storage-path.js`**: Centralized storage path resolver (`resolveStorageDir`) and safe JSON I/O helpers (`safeReadJson`, `safeWriteJson`).
 - **`src/hooks/mcp-wiring.js`**: `McpWiring` and `parseMcpConfig` managing MCP server lifecycles and tool registration.
 - **`src/hooks/update-check.js`**: `UpdateCheckLifecycle` tracking npm registry updates.
 - **`src/hooks/toast.js`**: User-facing notification dispatch.

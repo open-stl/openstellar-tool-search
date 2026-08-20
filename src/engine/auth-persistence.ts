@@ -1,8 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir, platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import process, { env } from 'node:process';
-import { writeJsonAtomic } from '../utils/atomic-write.js';
+import process from 'node:process';
+import { resolveStorageDir, safeReadJson, safeWriteJson } from '../utils/storage-path.js';
 
 interface CanonicalToolAuthorization {
   kind: 'canonical-tool';
@@ -28,11 +26,7 @@ interface AuthPersistenceOptions {
 }
 
 export function getDefaultAuthStoragePath(): string {
-  if (platform() === 'win32' && env.LOCALAPPDATA) {
-    return join(env.LOCALAPPDATA, 'openstellar', 'tool-search', 'authorizations.json');
-  }
-  const baseDir = env.XDG_CACHE_HOME || (env.VITEST ? join(tmpdir(), 'tool-search-test-' + process.pid + '-' + Math.random().toString(36).slice(2)) : join(homedir(), '.cache'));
-  return join(baseDir, 'openstellar', 'tool-search', 'authorizations.json');
+  return join(resolveStorageDir('tool-search'), 'authorizations.json');
 }
 
 function looksLikeSessionEntry(entry: unknown): entry is PersistedSession {
@@ -90,20 +84,12 @@ export class AuthPersistence {
     const authorizations = new Map<string, Set<PersistedToolAuthorization>>();
     const lastSeen = new Map<string, number>();
 
-    if (!existsSync(this.filePath)) {
+    const data = safeReadJson<PersistedAuthMap>(this.filePath);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
       return { authorizations, lastSeen };
     }
 
     try {
-      const content = readFileSync(this.filePath, 'utf-8');
-      if (!content.trim()) {
-        return { authorizations, lastSeen };
-      }
-      const data = JSON.parse(content) as PersistedAuthMap;
-      if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-        return { authorizations, lastSeen };
-      }
-
       const now = Date.now();
       for (const [sessionID, entry] of Object.entries(data)) {
         if (!looksLikeSessionEntry(entry)) {
@@ -200,20 +186,9 @@ export class AuthPersistence {
 
     const doWrite = async () => {
       try {
-        let mergedPayload: PersistedAuthMap = {};
-        if (existsSync(this.filePath)) {
-          try {
-            const content = readFileSync(this.filePath, 'utf-8');
-            if (content.trim()) {
-              const data = JSON.parse(content) as PersistedAuthMap;
-              if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
-                mergedPayload = data;
-              }
-            }
-          } catch {
-            mergedPayload = {};
-          }
-        }
+        const data = safeReadJson<PersistedAuthMap>(this.filePath);
+        const mergedPayload: PersistedAuthMap =
+          data && typeof data === 'object' && !Array.isArray(data) ? { ...data } : {};
 
         // Apply explicit deletions from this process instance
         for (const sessionID of this.deletedSessions) {
@@ -243,7 +218,7 @@ export class AuthPersistence {
           }
         }
 
-        writeJsonAtomic(this.filePath, mergedPayload);
+        safeWriteJson(this.filePath, mergedPayload);
       } catch {
         // Write failure - silent fallback
       }
@@ -277,20 +252,9 @@ export class AuthPersistence {
     this.pendingState = null;
 
     try {
-      let mergedPayload: PersistedAuthMap = {};
-      if (existsSync(this.filePath)) {
-        try {
-          const content = readFileSync(this.filePath, 'utf-8');
-          if (content.trim()) {
-            const data = JSON.parse(content) as PersistedAuthMap;
-            if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
-              mergedPayload = data;
-            }
-          }
-        } catch {
-          mergedPayload = {};
-        }
-      }
+      const data = safeReadJson<PersistedAuthMap>(this.filePath);
+      const mergedPayload: PersistedAuthMap =
+        data && typeof data === 'object' && !Array.isArray(data) ? { ...data } : {};
 
       for (const sessionID of this.deletedSessions) {
         delete mergedPayload[sessionID];
@@ -317,7 +281,7 @@ export class AuthPersistence {
         }
       }
 
-      writeJsonAtomic(this.filePath, mergedPayload);
+      safeWriteJson(this.filePath, mergedPayload);
     } catch {
       // Write failure - silent fallback
     }

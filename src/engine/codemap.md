@@ -165,15 +165,16 @@ SessionToolRegistry.compactSession(sessionID)
 - **`../utils/atomic-write.js` (`writeJsonAtomic`)**: Guarantees atomic filesystem writes via temporary file renaming.
 
 ### 2. Exported APIs & Classes
-- **`SessionEngine` (aliased as `SessionRuntime`)**: Primary subsystem orchestrator exposed to the plugin lifecycle hooks.
+- **`SessionEngine` (aliased as `SessionRuntime`)**: Primary subsystem orchestrator exposed to the plugin lifecycle hooks. Exposes canonical search tool specs (`searchToolSpecs`), context turn processing (`applyContextTurn`), and session lifecycle event routing (`handleSessionEvent`).
 - **`SessionToolRegistry`**: Unified domain registry for testing, integration, and standalone session management.
 - **`AuthorizationState`**: Authorization state machine managing permissions, migrations, and access control policies.
 - **`DeliveryHistory` & `computeFingerprint`**: Deduplication and fingerprinting utilities.
 - **`AuthPersistence` & `DeliveryHistoryPersistence`**: Standalone persistence adapters.
-- **Constants**: `SEARCH_IDS`, `DEFAULT_DEFER`, `WARMING_MESSAGE`.
+- **Constants**: `SEARCH_IDS`, `DEFAULT_DEFER`, `WARMING_MESSAGE`, `TOOL_SEARCH_PARAM_DESC`, `TOOL_SEARCH_REGEX_PARAM_DESC`.
 
 ### 3. Consumer Modules
-- **`src/plugin.ts`**: Instantiates `SessionEngine`, registers `engine.searchTools` with OpenCode, passes provider tools, and registers plugin event hooks.
+- **`src/plugin.ts`**: Instantiates `SessionEngine`, registers `engine.searchTools` with OpenCode 1.x, passes provider tools, delegates session events to `engine.handleSessionEvent(event)`.
+- **`src/v2/setup.ts`**: OpenCode 2.0 lifecycle adapter that registers `engine.searchToolSpecs` into `ctx.tool.transform`, applies `engine.applyContextTurn(sessionCtx)` on `session.hook('context')`, and delegates `session.deleted` to `engine.handleSessionEvent(event)`.
 - **`src/hooks/`**:
   - `tool-definition.ts`: Calls `engine.deferTool()` during tool registration.
   - `tool-execute.ts`: Calls `engine.assertAuthorized()` and `engine.handleToolExecuted()`.

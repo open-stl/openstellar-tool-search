@@ -10,6 +10,11 @@ import {
 import { AuthorizationState } from '../src/engine/authorization-state.js';
 import { SessionToolRegistry } from '../src/engine/session-tool-registry.js';
 import {
+  SessionEngine,
+  TOOL_SEARCH_PARAM_DESC,
+  TOOL_SEARCH_REGEX_PARAM_DESC,
+} from '../src/engine/session-engine.js';
+import {
   DeliveryHistory,
   computeFingerprint,
 } from '../src/engine/delivery-history.js';
@@ -23,6 +28,8 @@ import {
   buildDistTagsUrl,
 } from '../src/hooks/npm-registry.js';
 import { UpdateCheckLifecycle } from '../src/hooks/update-check.js';
+import { resolveStorageDir, safeReadJson, safeWriteJson } from '../src/utils/storage-path.js';
+import { configureTransformersEnv } from '../src/catalog/transformers-env.js';
 import type { ToolMeta } from '../src/types.js';
 
 // ============================================================================
@@ -368,3 +375,174 @@ describe('AutoUpdateChecker & npm-registry', () => {
     await expect(lifecycle.handleEvent('session.created')).resolves.not.toThrow();
   });
 });
+
+// ============================================================================
+// SessionEngine Canonical Specs & Context Seam Consolidation
+// ============================================================================
+
+describe('SessionEngine Canonical Specs & Context Seam', () => {
+  function createEngine(overrides: Record<string, unknown> = {}) {
+    return new SessionEngine(
+      {} as any,
+      {
+        alwaysOn: [],
+        resetTools: ['compress'],
+        maxResults: 5,
+        deferLabel: '[deferred]',
+        embedding: { enabled: false },
+        ...overrides,
+      } as any,
+    );
+  }
+
+  it('exposes authoritative searchToolSpecs with unified parameter descriptions', () => {
+    const engine = createEngine();
+    expect(engine.searchToolSpecs).toBeDefined();
+    expect(engine.searchToolSpecs.tool_search).toBeDefined();
+    expect(engine.searchToolSpecs.tool_search_regex).toBeDefined();
+
+    expect(engine.searchToolSpecs.tool_search.argDescription).toBe(TOOL_SEARCH_PARAM_DESC);
+    expect(engine.searchToolSpecs.tool_search.input.properties.query.description).toBe(TOOL_SEARCH_PARAM_DESC);
+
+    expect(engine.searchToolSpecs.tool_search_regex.argDescription).toBe(TOOL_SEARCH_REGEX_PARAM_DESC);
+    expect(engine.searchToolSpecs.tool_search_regex.input.properties.pattern.description).toBe(TOOL_SEARCH_REGEX_PARAM_DESC);
+  });
+
+  it('applies context turn: defers tools, prevents tag stacking, restores authorized tools, and injects policy', () => {
+    const engine = createEngine();
+    const sessionID = 'session-test-seam';
+
+    const sessionCtx: any = {
+      sessionID,
+      system: ['Existing system prompt'],
+      tools: {
+        custom_tool: {
+          description: 'A custom tool for processing data.',
+          input: {
+            type: 'object',
+            properties: { data: { type: 'string', description: 'Data string' } },
+            required: ['data'],
+          },
+        },
+      },
+    };
+
+    // First turn: custom_tool is unauthorized, should be deferred
+    engine.applyContextTurn(sessionCtx);
+
+    expect(sessionCtx.tools.custom_tool.description).toBe('A custom tool for processing data. [deferred]');
+    expect(sessionCtx.tools.custom_tool.input.properties.reason).toBeDefined();
+    expect(sessionCtx.system.some((s: any) => typeof s === 'string' && s.includes('[Tool Search Policy]'))).toBe(true);
+
+    // Second turn without authorization: should NOT stack [deferred] [deferred]
+    engine.applyContextTurn(sessionCtx);
+    expect(sessionCtx.tools.custom_tool.description).toBe('A custom tool for processing data. [deferred]');
+
+    // Authorize custom_tool
+    engine.sessionRegistry.processSearchResult(
+      sessionID,
+      [{ id: 'custom_tool', description: 'A custom tool for processing data.', parameters: {} }],
+      5,
+    );
+
+    // Third turn: should restore original description and input schema
+    engine.applyContextTurn(sessionCtx);
+    expect(sessionCtx.tools.custom_tool.description).toBe('A custom tool for processing data.');
+    expect(sessionCtx.tools.custom_tool.input.properties.data).toBeDefined();
+    expect(sessionCtx.tools.custom_tool.input.properties.reason).toBeUndefined();
+  });
+
+  it('injects policy text into structured { type: "text", text } system array', () => {
+    const engine = createEngine();
+    const sessionCtx: any = {
+      sessionID: 'session-struct-sys',
+      system: [{ type: 'text', text: 'Existing system prompt' }],
+      tools: {
+        deferred_tool: {
+          description: 'Does something useful.',
+          input: { type: 'object', properties: {} },
+        },
+      },
+    };
+
+    engine.applyContextTurn(sessionCtx);
+    const injected = sessionCtx.system.find((item: any) => typeof item === 'object' && item.text?.includes('[Tool Search Policy]'));
+    expect(injected).toBeDefined();
+    expect(injected.type).toBe('text');
+  });
+
+  it('handles session.deleted event across direct and nested event shapes', () => {
+    const engine = createEngine();
+    const sessionID1 = 'session-del-1';
+    const sessionID2 = 'session-del-2';
+
+    engine.sessionRegistry.processSearchResult(
+      sessionID1,
+      [{ id: 'tool_a', description: 'desc', parameters: {} }],
+      5,
+    );
+    engine.sessionRegistry.processSearchResult(
+      sessionID2,
+      [{ id: 'tool_b', description: 'desc', parameters: {} }],
+      5,
+    );
+    expect(engine.sessionRegistry.isAuthorized(sessionID1, 'tool_a')).toBe(true);
+    expect(engine.sessionRegistry.isAuthorized(sessionID2, 'tool_b')).toBe(true);
+
+    // Direct event shape
+    engine.handleSessionEvent({ type: 'session.deleted', properties: { sessionID: sessionID1 } });
+    expect(engine.sessionRegistry.isAuthorized(sessionID1, 'tool_a')).toBe(false);
+
+    // Nested event shape ({ event: { type: ... } })
+    engine.handleSessionEvent({ event: { type: 'session.deleted', properties: { sessionID: sessionID2 } } });
+    expect(engine.sessionRegistry.isAuthorized(sessionID2, 'tool_b')).toBe(false);
+  });
+});
+
+// ============================================================================
+// Storage Path & Transformers Env Utilities
+// ============================================================================
+
+describe('Storage Path & Transformers Env Utilities', () => {
+  it('resolveStorageDir resolves valid storage directory with optional subdir', () => {
+    const defaultDir = resolveStorageDir();
+    expect(defaultDir).toContain('tool-search');
+
+    const customSubdir = resolveStorageDir('custom-subdir');
+    expect(customSubdir).toContain('custom-subdir');
+  });
+
+  it('safeReadJson and safeWriteJson round-trip JSON data cleanly', () => {
+    const testDir = mkdtempSync(join(tmpdir(), 'tool-search-storage-test-'));
+    const testFile = join(testDir, 'test-payload.json');
+    try {
+      expect(safeReadJson(testFile)).toBeNull();
+
+      const payload = { hello: 'world', numbers: [1, 2, 3] };
+      safeWriteJson(testFile, payload);
+
+      const readBack = safeReadJson<{ hello: string; numbers: number[] }>(testFile);
+      expect(readBack).toEqual(payload);
+
+      // Malformed JSON returns null without throwing
+      writeFileSync(testFile, '{ not valid json');
+      expect(safeReadJson(testFile)).toBeNull();
+    } finally {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('configureTransformersEnv sets log levels and env settings safely', () => {
+    const mockEnv: any = {};
+    configureTransformersEnv(mockEnv);
+    expect(mockEnv.logLevel).toBe('error');
+    expect(mockEnv.backends?.onnx?.logLevel).toBe('error');
+
+    // Safe when passed null / undefined / primitives
+    expect(() => configureTransformersEnv(null)).not.toThrow();
+    expect(() => configureTransformersEnv(undefined)).not.toThrow();
+  });
+});
+

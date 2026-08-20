@@ -1,10 +1,8 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir, platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import process, { env } from 'node:process';
+import process from 'node:process';
 import type { ToolMeta } from '../types.js';
-import { writeJsonAtomic } from '../utils/atomic-write.js';
+import { resolveStorageDir, safeReadJson, safeWriteJson } from '../utils/storage-path.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,12 +45,8 @@ export function computeFingerprint(toolMeta: ToolMeta): string {
 // Delivery history persistence
 // ---------------------------------------------------------------------------
 
-function getDefaultDeliveryHistoryPath(): string {
-  if (platform() === 'win32' && env.LOCALAPPDATA) {
-    return join(env.LOCALAPPDATA, 'openstellar', 'tool-search', 'session-deliveries.json');
-  }
-  const baseDir = env.XDG_CACHE_HOME || (env.VITEST ? join(tmpdir(), 'tool-search-test-' + process.pid + '-' + Math.random().toString(36).slice(2)) : join(homedir(), '.cache'));
-  return join(baseDir, 'openstellar', 'tool-search', 'session-deliveries.json');
+export function getDefaultDeliveryHistoryPath(): string {
+  return join(resolveStorageDir(), 'session-deliveries.json');
 }
 
 interface DeliveryHistoryPersistenceOptions {
@@ -102,17 +96,9 @@ export class DeliveryHistoryPersistence {
   public load(): Map<string, Map<string, string>> {
     const result = new Map<string, Map<string, string>>();
 
-    if (!existsSync(this.filePath)) {
-      return result;
-    }
-
     try {
-      const content = readFileSync(this.filePath, 'utf-8');
-      if (!content.trim()) {
-        return result;
-      }
-      const data = JSON.parse(content) as PersistedDeliveryHistory;
-      if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+      const data = safeReadJson<PersistedDeliveryHistory>(this.filePath);
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
         return result;
       }
 
@@ -178,15 +164,10 @@ export class DeliveryHistoryPersistence {
 
     const doWrite = async () => {
       try {
-        let payload: PersistedDeliveryHistory = {};
-        if (existsSync(this.filePath)) {
-          try {
-            const raw = readFileSync(this.filePath, 'utf-8');
-            payload = JSON.parse(raw);
-          } catch {
-            payload = {};
-          }
-        }
+        const raw = safeReadJson<PersistedDeliveryHistory>(this.filePath);
+        const payload: PersistedDeliveryHistory =
+          raw && typeof raw === 'object' && !Array.isArray(raw) ? { ...raw } : {};
+
         for (const sessionID of this.trackedSessions) {
           if (!stateToWrite.has(sessionID)) {
             delete payload[sessionID];
@@ -204,7 +185,7 @@ export class DeliveryHistoryPersistence {
           }
         }
 
-        writeJsonAtomic(this.filePath, payload);
+        safeWriteJson(this.filePath, payload);
       } catch {
         // Write failure - silent fallback
       }
@@ -249,7 +230,7 @@ export class DeliveryHistoryPersistence {
         }
       }
 
-      writeJsonAtomic(this.filePath, payload);
+      safeWriteJson(this.filePath, payload);
     } catch {
       // Write failure - silent fallback
     }

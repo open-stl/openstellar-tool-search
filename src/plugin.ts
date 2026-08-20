@@ -92,14 +92,8 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     },
     event: async ({ event }) => {
       try {
-        if (event?.type === 'session.deleted') {
-          const sessionID = (event.properties as { sessionID?: unknown } | undefined)?.sessionID;
-          if (typeof sessionID === 'string' && sessionID.length > 0) {
-            runtime.deleteSession(sessionID);
-          }
-          return;
-        }
-        if (event?.type) {
+        runtime.handleSessionEvent(event);
+        if (event?.type && event.type !== 'session.deleted') {
           await updateCheck.handleEvent(event.type);
         }
       } catch {

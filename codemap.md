@@ -24,12 +24,12 @@ The plugin manages per-session authorization state machines, tool delivery dedup
 | `src/` | Plugin entry point, option validation, hook orchestration, and system-level coordination between engine, catalog, MCP, and host. | [View Map](src/codemap.md) |
 | `src/core/` | Shared core bootstrap (`bootstrapPluginCore`), configuration validation, JSONC parsing, fallback MCP loading, and logging. | [View Map](src/core/codemap.md) |
 | `src/v2/` | OpenCode 2.0 plugin lifecycle adapter, tool registration (`tool.transform`), execution hooks (`execute.before`, `execute.after`), and session context synchronization (`session.hook('context')`). | — |
-| `src/catalog/` | Centralized tool metadata catalog, schema normalization (`$ref` inlining, Effect-TS conversion), Okapi BM25 ranking, ONNX vector embeddings with worker-thread offloading, and Reciprocal Rank Fusion (RRF). | [View Map](src/catalog/codemap.md) |
-| `src/engine/` | Session runtime, state-machine authorization enforcement, content-addressable tool fingerprinting, delivery deduplication (Rule 41), context pruning synchronization, and persistence adapters. | [View Map](src/engine/codemap.md) |
+| `src/catalog/` | Centralized tool metadata catalog, schema normalization (`$ref` inlining, Effect-TS conversion), Okapi BM25 ranking, ONNX vector embeddings with worker-thread offloading, Transformers environment configuration (`transformers-env.ts`), and Reciprocal Rank Fusion (RRF). | [View Map](src/catalog/codemap.md) |
+| `src/engine/` | Session runtime (`SessionEngine`), canonical search tool specifications (`searchToolSpecs`), context turn application (`applyContextTurn`), session lifecycle event handling (`handleSessionEvent`), state-machine authorization enforcement, content-addressable tool fingerprinting, delivery deduplication (Rule 41), context pruning synchronization, and persistence adapters. | [View Map](src/engine/codemap.md) |
 | `src/hooks/` | OpenCode hook interceptors (`tool.definition`, `tool.execute.*`, `system.transform`), MCP server pre-warming lifecycle, update checks, package cache invalidation, and TUI toast delivery. | [View Map](src/hooks/codemap.md) |
 | `src/mcp/` | Model Context Protocol (MCP) client manager, dynamic `ToolProvider`, JSON Schema-to-Zod adapter, connection pooling with promise coalescing, and tool execution wrappers. | [View Map](src/mcp/codemap.md) |
 | `src/mcp/transports/` | Low-level transport connectors for local child process standard I/O (`stdio` with `stderr` diagnostics capture), remote streamable HTTP, and safe teardown. | [View Map](src/mcp/transports/codemap.md) |
-| `src/utils/` | Reusable cross-cutting utilities, featuring crash-safe, race-free atomic file persistence (`writeJsonAtomic`). | [View Map](src/utils/codemap.md) |
+| `src/utils/` | Reusable cross-cutting utilities, featuring crash-safe atomic file persistence (`writeJsonAtomic`) and centralized storage directory resolution with safe JSON file I/O (`storage-path.ts`). | [View Map](src/utils/codemap.md) |
 
 ---
 

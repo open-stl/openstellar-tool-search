@@ -4,6 +4,7 @@ import path from 'node:path';
 import { isMainThread, Worker } from 'node:worker_threads';
 import { pipelineOptions } from '../types.js';
 import type { EmbedConfig } from '../types.js';
+import { configureTransformersEnv } from './transformers-env.js';
 
 type InferenceOpts = { pooling: string; normalize: boolean };
 
@@ -222,10 +223,7 @@ export class SemanticMatcher {
   private async doLoad(): Promise<void> {
     try {
       const { env, pipeline } = await import('@xenova/transformers');
-      (env as Record<string, unknown>).logLevel = 'error';
-      if (env.backends?.onnx) {
-        env.backends.onnx.logLevel = 'error';
-      }
+      configureTransformersEnv(env);
       const name = this.cfg.model ?? DEFAULT_MODEL;
       const opts = pipelineOptions(this.cfg);
 

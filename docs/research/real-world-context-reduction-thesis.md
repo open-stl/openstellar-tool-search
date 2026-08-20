@@ -132,6 +132,14 @@ To evaluate real-world performance, we constructed a heterogeneous benchmark cor
 
 ### 3.2 Single-Turn Token Reduction Analysis
 
+```mermaid
+xychart-beta
+    title "Tool Context Reduction by Complexity Tier (%)"
+    x-axis ["Enterprise Graph", "API Engine", "Design System", "Workstream LTM", "Graph Search", "Global Average"]
+    y-axis "Token Reduction (%)" 0 --> 50
+    bar [44.8, 24.6, 23.3, 20.5, 16.9, 12.5]
+```
+
 | Complexity Tier | Representative Tool | Baseline Tokens | Deferred Tokens | Net Saved | Reduction (%) |
 | :--- | :--- | :---: | :---: | :---: | :---: |
 | **Heavy (Enterprise Graph)** | `codebase_memory_query_graph` | $1,121$ | $619$ | **$+502$** | **$+44.78\%$** |
@@ -185,13 +193,29 @@ $$\text{MRR} = \frac{1}{|\mathcal{Q}|} \sum_{q=1}^{|\mathcal{Q}|} \frac{1}{\text
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The combination of exact identifier matching and BM25 token relevance achieved a **100% Top-3 hit rate**, ensuring the agent reliably discovers the target tool on its first retrieval query without false negatives or degraded task completion.
+```mermaid
+xychart-beta
+    title "Search Latency vs. LLM Turn Generation Time (ms)"
+    x-axis ["Tool Search (p50)", "Tool Search (p99)", "IPC / MCP Wire", "Local LLM TTFT", "Cloud LLM TTFT"]
+    y-axis "Response Time (ms)" 0 --> 1200
+    bar [0.037, 0.092, 2.5, 350, 1200]
+```
+
+The combination of exact identifier matching and BM25 token relevance achieved a **100% Top-3 hit rate**, ensuring the agent reliably discovers the target tool on its first retrieval query without false negatives or degraded task completion. At **0.037 ms** ($\approx 37\ \mu\text{s}$), search latency accounts for $<0.003\%$ of end-to-end model inference, adding zero perceptible latency.
 
 ---
 
 ### 3.4 Multi-Turn Compounding Economics & Cost Analysis
 
 In long-running autonomous sessions ($T = 1\text{ to }100\text{ turns}$), input tokens are billed cumulatively on every generation step. Assuming an industry-standard frontier pricing tier of **$\$2.50\text{ per }1\text{M input tokens}$** and an average per-turn history growth of $750$ tokens ($300$ user prompt $+ 450$ model generation):
+
+```mermaid
+xychart-beta
+    title "Multi-Turn Compounding Cumulative Token Savings (k Tokens)"
+    x-axis ["T=1", "T=5", "T=10", "T=20", "T=30", "T=50", "T=100"]
+    y-axis "Cumulative Tokens Saved (k Tokens)" 0 --> 400
+    line [3.6, 17.8, 35.7, 71.3, 107.0, 178.4, 356.7]
+```
 
 | Turn ($T$) | Cumulative Baseline Tokens | Cumulative Deferred Tokens | Cumulative Saved Tokens | Baseline Cost (USD) | Deferred Cost (USD) | Net Savings (USD) | Relative Reduction (%) |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |

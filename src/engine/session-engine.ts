@@ -3,13 +3,59 @@ import { tool } from '@opencode-ai/plugin';
 import { ToolVault } from '../catalog/vault.js';
 import type { EmbedConfig } from '../types.js';
 import { SessionToolRegistry } from './session-tool-registry.js';
-import { normalizeParameters, truncateDescription } from '../catalog/schema-normalize.js';
+import { normalizeParameters, truncateDescription, PLACEHOLDER_PARAMS } from '../catalog/schema-normalize.js';
 
 export const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
 export const DEFAULT_DEFER = '[deferred]';
 const MAX_REGEX_PATTERN_LENGTH = 200;
 const SEARCH_TIMEOUT_MS = 2000;
 const MAX_QUERY_LENGTH = 500;
+
+export const TOOL_SEARCH_PARAM_DESC =
+  'Semantic capability or task description (e.g. "search code AST", "fetch web page").';
+export const TOOL_SEARCH_REGEX_PARAM_DESC =
+  'Anchored regex for exact ID: "^id$", multiple IDs: "^(toolA|toolB)$", or prefix: "^prefix_".';
+
+export interface SearchToolSpec {
+  name: string;
+  description: string;
+  argName: string;
+  argDescription: string;
+  input: {
+    type: 'object';
+    properties: Record<string, { type: string; description: string }>;
+    required: string[];
+  };
+  execute: (args: any, context?: any) => Promise<any>;
+}
+
+/**
+ * Builds the canonical description for the semantic tool_search tool.
+ */
+export function buildToolSearchDescription(deferLabel: string): string {
+  return `Find deferred tools marked "${deferLabel}" by task, capability, or semantic intent when you do not know the exact tool name. Returns full tool IDs and parameter schemas.
+Call tool_search({ query: "<task description>" }).
+WHEN TO USE: you need a capability but do not know which tool provides it (e.g. "search git commit history", "inspect AST"), or discovering relevant tools for a broad task.
+WHEN NOT TO USE:
+- You already know the exact tool ID(s) (e.g. "skill", "read", "bash") — use tool_search_regex({ pattern: "^tool_name$" }) instead.
+- DO NOT pass space-separated lists of multiple tool names — use tool_search_regex with alternation instead.
+- You already searched this tool in the current active context and know its canonical ID — call it directly instead.`;
+}
+
+/**
+ * Builds the canonical description for the regex tool_search_regex tool.
+ */
+export function buildToolSearchRegexDescription(_deferLabel?: string): string {
+  return `Retrieve full descriptions and schemas for known tool ID(s) or pattern matching using regex. Returns full tool IDs and parameter schemas.
+Call tool_search_regex({ pattern: "<regex>" }).
+WHEN TO USE:
+- You know the exact tool ID (e.g. tool_search_regex({ pattern: "^skill$" })).
+- You want to unlock MULTIPLE known tools at once via regex alternation (e.g. tool_search_regex({ pattern: "^(read|write|edit|glob|grep|bash|skill)$" })).
+- Finding tools matching a specific prefix or pattern (e.g. "^ctx_").
+WHEN NOT TO USE:
+- Semantic/fuzzy searches when tool names are unknown — use tool_search({ query: "<task>" }) instead.
+- You already searched this tool in the current active context and know its canonical ID — call it directly instead.`;
+}
 /**
  * Second-phase budget granted when the first phase found no hits while the
  * Tool Vault was still warming up: gives a slow-but-alive MCP server time to
@@ -63,6 +109,7 @@ export class SessionEngine {
   public readonly vault: ToolVault;
   public readonly sessionRegistry: SessionToolRegistry;
   public readonly searchTools: Record<string, ReturnType<typeof tool>>;
+  public readonly searchToolSpecs: Record<string, SearchToolSpec>;
   public readonly deferLabel: string;
   private readonly maxResults: number;
   private readonly useWorker: boolean;
@@ -82,6 +129,7 @@ export class SessionEngine {
       alwaysOn: options.alwaysOn,
       resetTools: options.resetTools,
     });
+    this.searchToolSpecs = this.buildSearchToolSpecs();
     this.searchTools = this.buildSearchTools();
   }
 
@@ -378,18 +426,90 @@ export class SessionEngine {
     return revoked;
   }
 
+  public applyContextTurn(sessionCtx: {
+    sessionID?: string;
+    tools?: Record<string, any>;
+    system?: any[];
+    messages?: any[];
+  }): void {
+    if (!sessionCtx) return;
+
+    this.syncSleevCompression(sessionCtx.sessionID, sessionCtx.messages);
+
+    if (sessionCtx.tools && typeof sessionCtx.tools === 'object') {
+      for (const [toolName, toolDef] of Object.entries(sessionCtx.tools as Record<string, any>)) {
+        if (!toolDef || typeof toolDef !== 'object' || SEARCH_IDS.has(toolName)) continue;
+        const normalizedInput = normalizeParameters(toolDef.input, toolDef.jsonSchema);
+        this.vault.add(toolName, toolDef.description, normalizedInput);
+        if (this.sessionRegistry.registerTool(toolName)) {
+          if (!this.sessionRegistry.isAuthorized(sessionCtx.sessionID, toolName)) {
+            const pristineDesc = this.vault.get(toolName)?.description ?? toolDef.description;
+            toolDef.description = truncateDescription(pristineDesc, this.deferLabel);
+            toolDef.input = PLACEHOLDER_PARAMS;
+          } else {
+            const stored = this.vault.get(toolName);
+            if (stored) {
+              toolDef.description = stored.description;
+              toolDef.input = stored.parameters;
+            }
+          }
+        }
+      }
+    }
+
+    const state = this.prepareForSystemTransform();
+    if (state.policyText && Array.isArray(sessionCtx.system)) {
+      if (
+        sessionCtx.system.length > 0 &&
+        typeof sessionCtx.system[0] === 'object' &&
+        sessionCtx.system[0] !== null &&
+        'text' in sessionCtx.system[0]
+      ) {
+        sessionCtx.system.push({ type: 'text', text: state.policyText });
+      } else {
+        sessionCtx.system.push(state.policyText);
+      }
+    }
+    if (state.alert) {
+      this.notify?.(state.alert.title, state.alert.message, state.alert.variant, state.alert.duration);
+    }
+  }
+
+  public handleSessionEvent(event: any): void {
+    const evt = event?.event ?? event;
+    if (!evt || typeof evt !== 'object') return;
+    if (evt.type === 'session.deleted') {
+      const sessionID = (evt.properties as { sessionID?: unknown } | undefined)?.sessionID;
+      if (typeof sessionID === 'string' && sessionID.length > 0) {
+        this.deleteSession(sessionID);
+      }
+    }
+  }
+
   public deleteSession(sessionID: string | undefined): void {
     this.sessionRegistry.deleteSession(sessionID);
   }
 
-  private buildSearchTools(): Record<string, ReturnType<typeof tool>> {
+  private buildSearchToolSpecs(): Record<string, SearchToolSpec> {
     const deferLabel = this.deferLabel;
     const { vault, sessionRegistry, maxResults } = this;
     return {
-      tool_search: tool({
-        description: `Find deferred tools marked "${deferLabel}" by task, capability, or semantic intent when you do not know the exact tool name. Returns full tool IDs and parameter schemas.\nCall tool_search({ query: "<task description>" }).\nWHEN TO USE: you need a capability but do not know which tool provides it (e.g. "search git commit history", "inspect AST"), or discovering relevant tools for a broad task.\nWHEN NOT TO USE:\n- You already know the exact tool ID(s) (e.g. "skill", "read", "bash") — use tool_search_regex({ pattern: "^tool_name$" }) instead.\n- DO NOT pass space-separated lists of multiple tool names — use tool_search_regex with alternation instead.\n- You already searched this tool in the current active context and know its canonical ID — call it directly instead.`,
-        args: { query: tool.schema.string().describe('Semantic capability or task description (e.g. "search code AST", "fetch web page").') },
-        async execute(args, context) {
+      tool_search: {
+        name: 'tool_search',
+        description: buildToolSearchDescription(deferLabel),
+        argName: 'query',
+        argDescription: TOOL_SEARCH_PARAM_DESC,
+        input: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: TOOL_SEARCH_PARAM_DESC,
+            },
+          },
+          required: ['query'],
+        },
+        execute: async (args: { query: string }, context?: { sessionID?: string }) => {
           if (args.query.length > MAX_QUERY_LENGTH) {
             return `Query exceeds maximum length of ${MAX_QUERY_LENGTH} characters.`;
           }
@@ -415,11 +535,23 @@ export class SessionEngine {
           const processing = sessionRegistry.processSearchResult(sessionID, allHits, maxResults);
           return processing.responseText;
         },
-      }),
-      tool_search_regex: tool({
-        description: `Retrieve full descriptions and schemas for known tool ID(s) or pattern matching using regex. Returns full tool IDs and parameter schemas.\nCall tool_search_regex({ pattern: "<regex>" }).\nWHEN TO USE:\n- You know the exact tool ID (e.g. tool_search_regex({ pattern: "^skill$" })).\n- You want to unlock MULTIPLE known tools at once via regex alternation (e.g. tool_search_regex({ pattern: "^(read|write|edit|glob|grep|bash|skill)$" })).\n- Finding tools matching a specific prefix or pattern (e.g. "^ctx_").\nWHEN NOT TO USE:\n- Semantic/fuzzy searches when tool names are unknown — use tool_search({ query: "<task>" }) instead.\n- You already searched this tool in the current active context and know its canonical ID — call it directly instead.`,
-        args: { pattern: tool.schema.string().describe('Anchored regex for exact ID: "^id$", multiple IDs: "^(toolA|toolB)$", or prefix: "^prefix_".') },
-        async execute(args, context) {
+      },
+      tool_search_regex: {
+        name: 'tool_search_regex',
+        description: buildToolSearchRegexDescription(deferLabel),
+        argName: 'pattern',
+        argDescription: TOOL_SEARCH_REGEX_PARAM_DESC,
+        input: {
+          type: 'object',
+          properties: {
+            pattern: {
+              type: 'string',
+              description: TOOL_SEARCH_REGEX_PARAM_DESC,
+            },
+          },
+          required: ['pattern'],
+        },
+        execute: async (args: { pattern: string }, context?: { sessionID?: string }) => {
           if (args.pattern.length > MAX_REGEX_PATTERN_LENGTH) {
             return `Pattern exceeds maximum length of ${MAX_REGEX_PATTERN_LENGTH} characters.`;
           }
@@ -450,8 +582,20 @@ export class SessionEngine {
           const processing = sessionRegistry.processSearchResult(sessionID, allHits, maxResults);
           return processing.responseText;
         },
-      }),
+      },
     };
+  }
+
+  private buildSearchTools(): Record<string, ReturnType<typeof tool>> {
+    const tools: Record<string, ReturnType<typeof tool>> = {};
+    for (const [name, spec] of Object.entries(this.searchToolSpecs)) {
+      tools[name] = tool({
+        description: spec.description,
+        args: { [spec.argName]: tool.schema.string().describe(spec.argDescription) },
+        execute: spec.execute,
+      });
+    }
+    return tools;
   }
 }
 

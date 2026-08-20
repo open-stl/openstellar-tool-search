@@ -168,6 +168,7 @@
 | `RankEngine<T>` | `rank.ts` | Generic Okapi BM25 implementation. |
 | `ToolProvider`, `ToolDefinition` | `tool-provider.ts` | Seam contracts for local and remote tool sources. |
 | `normalizeParameters`, `inlineLocalReferences` | `schema-normalize.ts` | JSON Schema & Effect-TS AST normalization and reference dereferencing. |
+| `configureTransformersEnv` | `transformers-env.ts` | Centralized environment and logging configurator for `@xenova/transformers` and ONNX backends. |
 
 ### Upstream Subsystems & Consumer Modules
 - **`src/engine/session-engine.ts` (`SessionRuntime`)**:

@@ -172,3 +172,15 @@ export function truncateDescription(desc: string, deferLabel: string): string {
   return firstSentence ? `${firstSentence} ${deferLabel}` : deferLabel;
 }
 
+export const PLACEHOLDER_PARAMS = {
+  type: 'object',
+  properties: {
+    reason: {
+      type: 'string',
+      description: 'Brief explanation of why you are calling this tool',
+    },
+  },
+  required: ['reason'],
+} as const;
+
+

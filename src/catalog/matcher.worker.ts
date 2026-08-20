@@ -1,4 +1,5 @@
 import { parentPort } from 'node:worker_threads';
+import { configureTransformersEnv } from './transformers-env.js';
 
 type PipelineOptions = { quantized?: boolean; dtype?: string };
 type InferenceOpts = { pooling: string; normalize: boolean };
@@ -27,10 +28,7 @@ if (parentPort) {
     if (message.type === 'init') {
       try {
         const { env, pipeline } = await import('@xenova/transformers');
-        (env as Record<string, unknown>).logLevel = 'error';
-        if (env.backends?.onnx) {
-          env.backends.onnx.logLevel = 'error';
-        }
+        configureTransformersEnv(env);
 
         const pipe = await pipeline(
           'feature-extraction',
