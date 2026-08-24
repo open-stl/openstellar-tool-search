@@ -392,7 +392,7 @@ $$\Delta C(T) = C_{\text{static}}(T) - C_{\text{def}}(T) = T \cdot (S_{\text{sta
            │           ┌─────┘ ┌─────┘
       0  ──┴───────────┴───────┴───────┴───────┴───────┴───────┴───
            T=1        T=20    T=40    T=60    T=80    T=100
-           [ Net Savings: ~356,700 Tokens / Session ($0.89 USD @ $2.50/1M) ]
+            [ Net Savings: ~1,684,800 Tokens / Session ($4.21 USD @ $2.50/1M) ]
 ```
 
 #### 3.3.2 Relative Savings Decay and the Dual Optimization Theorem

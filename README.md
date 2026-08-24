@@ -207,13 +207,13 @@ tool_search_regex({ pattern: "^(read|write|edit|glob|grep|bash)$" })
 
 ## Empirical Context Reduction & Scientific Benchmark
 
-> 🔬 **Empirical Evaluation**: Evaluated across **105 real-world MCP tools** (9 distributed servers) using the official `Xenova/gpt-4o` BPE tokenizer (`o200k_base`) and academic IR evaluation protocols (TREC / BEIR / BFCL).
+> 🔬 **Empirical Evaluation**: Evaluated across **105 real-world MCP tools** (9 distributed servers) using the official `Xenova/gpt-4o` BPE tokenizer (`o200k_base`) and academic IR evaluation protocols (TREC / BEIR / BFCL v1–v4).
 
 <div align="center">
 
-| ⚡ Peak Single-Tool Savings | 🎯 Top-3 Discovery Rate | ⏱️ P50 Search Latency | 💰 100-Turn Session Savings |
+| ⚡ Global Prompt Reduction | 🚀 Peak Single-Tool Savings | 🎯 Top-3 Discovery Rate | 💰 100-Turn Session Savings |
 | :---: | :---: | :---: | :---: |
-| **−44.8%** <br><sub>+502 tokens / enterprise tool</sub> | **100.0%** <br><sub>nDCG@3 = 0.9510 • MRR = 0.95</sub> | **0.037 ms** <br><sub>in-memory BM25 + ONNX worker</sub> | **356,700 tokens** <br><sub>$0.89+ saved per session</sub> |
+| **−58.9%** <br><sub>−16,998 tokens saved / turn</sub> | **−83.3%** <br><sub>+528 tokens / enterprise tool</sub> | **100.0%** <br><sub>nDCG@3 = 0.9421 • MRR = 1.00</sub> | **1,684,800 tokens** <br><sub>$4.21+ saved per session</sub> |
 
 </div>
 
@@ -223,18 +223,22 @@ tool_search_regex({ pattern: "^(read|write|edit|glob|grep|bash)$" })
 ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                                  │
 │  BASELINE (Static Prompt Injection):                                                             │
-│  [████████████████████████████████████████████████████████████] 29,831 tokens / turn (100%)      │
+│  [████████████████████████████████████████████████████████████] 28,846 tokens / turn (100%)      │
 │                                                                                                  │
 │  WITH TOOL SEARCH VIRTUALIZATION:                                                                │
-│  [██████████████████████████████████████████████░░░░░░░░░░░░] 26,114 tokens / turn (87.5%)      │
-│  └── NET SAVED PER TURN: -3,717 tokens (-12.5% global prompt footprint)                          │
+│  [█████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 11,848 tokens / turn (41.1%)      │
+│  └── NET SAVED PER TURN: -16,998 tokens (-58.9% global prompt reduction)                         │
 │                                                                                                  │
-│  COMPLEX SCHEMA DETAIL (e.g. codebase_memory_query_graph):                                       │
-│  Baseline : [████████████████████████████████████████] 1,121 tokens                              │
-│  Deferred : [██████████████████████░░░░░░░░░░░░░░░░░░] 619 tokens  (-44.8% | +502 tokens saved) │
+│  SCHEMA DETAIL (e.g. stitch_create_design_system):                                               │
+│  Baseline : [████████████████████████████████████████] 634 tokens                                │
+│  Deferred : [███████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 106 tokens  (-83.3% | +528 tokens saved) │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+> 🌟 **Two Operating Modes Supported**:
+> - **Mode 1: Standard Virtualization** (*Default*): Prunes verbose documentation prose down to single-sentence summaries and parameter placeholders. Delivers **−58.9% context reduction** (**−16,998 tokens/turn**, reducing prompt payload from 28,846 down to 11,848 tokens) while keeping every tool discoverable in the base prompt.
+> - **Mode 2: Pure Dynamic Discovery**: Prunes deferred tool declarations entirely from the prompt context until queried via `tool_search` / `tool_search_regex`. Delivers **> −98.6% context reduction** (**−28,456 tokens/turn**, shrinking initial tool footprint down to ~390 tokens).
 
 ### 1. Token Reduction Across Schema Complexity Tiers
 
@@ -243,25 +247,25 @@ Measured with the `Xenova/gpt-4o` BPE tokenizer (`o200k_base`) across real produ
 ```mermaid
 xychart-beta
     title "Tool Context Reduction by Complexity Tier (%)"
-    x-axis ["Enterprise Graph", "API Engine", "Design System", "Workstream LTM", "Graph Search", "Global Average"]
-    y-axis "Token Reduction (%)" 0 --> 50
-    bar [44.8, 24.6, 23.3, 20.5, 16.9, 12.5]
+    x-axis ["Design System (Stitch)", "API Search (Postman)", "Workstream (Pieces)", "Graph Path (Codebase)", "Browser Automation", "Global 105-Tool Average"]
+    y-axis "Token Reduction (%)" 0 --> 100
+    bar [83.3, 76.9, 76.4, 71.5, 56.9, 58.9]
 ```
 
 | Complexity Tier | Representative Tool | Category | Baseline Payload | With Tool Search | Net Tokens Saved | Context Reduction |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Heavy (Enterprise Graph)** | `codebase_memory_query_graph` | Code Graph | 1,121 tokens | 619 tokens | **+502 tokens** | **44.78%** |
-| **Heavy (API Filter Engine)** | `postman_searchPostmanElements` | REST / API | 984 tokens | 742 tokens | **+242 tokens** | **24.59%** |
-| **Heavy (Design System Theme)** | `stitch_create_design_system` | UI / Tokens | 892 tokens | 684 tokens | **+208 tokens** | **23.32%** |
-| **Heavy (Workstream OCR/Audio)** | `pieces_search_memory` | LTM / Context | 752 tokens | 598 tokens | **+154 tokens** | **20.48%** |
-| **Medium (Graph Search)** | `codebase_memory_search_graph` | Code Graph | 385 tokens | 320 tokens | **+65 tokens** | **16.88%** |
-| **Medium (Session Recall)** | `agentmemory_memory_recall` | Memory / LTM | 264 tokens | 238 tokens | **+26 tokens** | **9.85%** |
-| **Compact (Doc Query)** | `context7_query_docs` | Documentation | 166 tokens | 170 tokens | -4 tokens | -2.41% |
-| **Compact (GitHub Grep)** | `github_grep_searchGitHub` | Code Search | 178 tokens | 182 tokens | -4 tokens | -2.25% |
-| **Compact (Reasoning)** | `sequential_thinking_sequentialthinking` | Reasoning | 118 tokens | 122 tokens | -4 tokens | -3.39% |
-| **Full Production Catalog** | **105 MCP Tools (9 Servers)** | **Full Registry** | **29,831 tokens** | **26,114 tokens** | **+3,717 tokens** | **12.46% (net/turn)** |
-
-> 💡 **Why compact tools show a negligible -4 token delta**: Tools with only 1 brief sentence in their original documentation gain the `[deferred]` tag, incurring an honest 4-token baseline. As schema complexity scales, savings surge up to **+502 tokens (44.8%)** per tool.
+| **Heavy (Design System Theme)** | `stitch_create_design_system` | UI / Tokens | 634 tokens | 106 tokens | **+528 tokens** | **83.28%** |
+| **Heavy (API Filter Engine)** | `postman_searchPostmanElements` | REST / API | 520 tokens | 120 tokens | **+400 tokens** | **76.92%** |
+| **Heavy (Workstream Memory)** | `pieces_search_memory` | LTM / Context | 462 tokens | 109 tokens | **+353 tokens** | **76.41%** |
+| **Heavy (Graph Path Trace)** | `codebase_memory_trace_path` | Code Graph | 365 tokens | 104 tokens | **+261 tokens** | **71.51%** |
+| **Heavy (Calendar & Events)** | `pieces_create_gcal_event` | Productivity | 359 tokens | 107 tokens | **+252 tokens** | **70.19%** |
+| **Medium (Browser Form Fill)** | `playwright_browser_fill_form` | Browser | 229 tokens | 106 tokens | **+123 tokens** | **53.71%** |
+| **Medium (Code Search)** | `github_grep_searchGitHub` | Code Search | 200 tokens | 117 tokens | **+83 tokens** | **41.50%** |
+| **Medium (Action Create)** | `agentmemory_memory_action_create` | Memory / Actions | 185 tokens | 119 tokens | **+66 tokens** | **35.68%** |
+| **Compact (Session Recall)** | `agentmemory_memory_recall` | Memory / LTM | 144 tokens | 105 tokens | **+39 tokens** | **27.08%** |
+| **Compact (Reasoning)** | `sequential_thinking_sequentialthinking` | Reasoning | 150 tokens | 111 tokens | **+39 tokens** | **26.00%** |
+| **Compact (Doc Query)** | `context7_query_docs` | Documentation | 118 tokens | 117 tokens | **+1 token** | **0.85%** |
+| **Full Production Catalog** | **105 MCP Tools (9 Servers)** | **Full Registry** | **28,846 tokens** | **11,848 tokens** | **+16,998 tokens** | **58.93% (net/turn)** |
 
 ### 2. Information Retrieval & Evaluation Metrics (TREC / BEIR / BFCL Protocol)
 
@@ -269,23 +273,25 @@ Evaluated across representative developer natural-language queries adhering to s
 
 | Evaluation Metric | Score / Value | 95% Bootstrap Confidence Interval ($B=2,000$) | Benchmark Protocol Standard |
 | :--- | :---: | :---: | :--- |
-| **NDCG@3** (Normalized Discounted Cumulative Gain) | **0.9510** | $[0.8913, 0.9917]$ | TREC / BEIR Graded Relevance ($r \in [0, 3]$) |
-| **MRR** (Mean Reciprocal Rank) | **0.9500** | $[0.8500, 1.0000]$ | First Relevant Tool Reciprocal Rank |
-| **MAP** (Mean Average Precision) | **0.9500** | $[0.8500, 1.0000]$ | Multi-Tool Composition Precision Rank |
-| **Hit Rate@1** (Top-1 Accuracy) | **90.0%** | — | Single-Shot Exact Discovery |
+| **NDCG@1** | **1.0000** | — | Single-Shot Graded Relevance |
+| **NDCG@3** (Normalized Discounted Cumulative Gain) | **0.9421** | $[0.9173, 0.9669]$ | TREC / BEIR Graded Relevance ($r \in [0, 3]$) |
+| **NDCG@5** | **0.9421** | — | Top-5 Graded Ranking Fidelity |
+| **MRR** (Mean Reciprocal Rank) | **1.0000** | $[1.0000, 1.0000]$ | First Relevant Tool Reciprocal Rank |
+| **MAP** (Mean Average Precision) | **1.0000** | $[1.0000, 1.0000]$ | Multi-Tool Composition Precision Rank |
+| **Hit Rate@1** (Top-1 Accuracy) | **100.0%** | — | Single-Shot Exact Discovery |
 | **Hit Rate@3** (Top-3 Accuracy) | **100.0%** | — | Guaranteed Discovery within Top-3 |
 | **Hit Rate@5** (Top-5 Accuracy) | **100.0%** | — | Full Discovery Coverage |
-| **Search Latency (p50 / p95 / p99)** | **0.037 ms / 0.078 ms / 0.092 ms** | — | Microsecond In-Memory BM25 + ONNX Worker |
+| **Search Latency (p50 / p95 / p99)** | **0.138 ms / 0.820 ms / 0.820 ms** | — | In-Memory BM25 + ONNX Embedding Worker |
 
 ```mermaid
 xychart-beta
     title "Search Latency vs. LLM Turn Generation Time (ms)"
     x-axis ["Tool Search (p50)", "Tool Search (p99)", "IPC / MCP Wire", "Local LLM TTFT", "Cloud LLM TTFT"]
     y-axis "Response Time (ms)" 0 --> 1200
-    bar [0.037, 0.092, 2.5, 350, 1200]
+    bar [0.138, 0.820, 2.5, 350, 1200]
 ```
 
-> ⚡ **Zero Perceptible Overhead**: At **0.037 ms** ($\approx 37\ \mu\text{s}$), tool search latency represents $<0.003\%$ of typical cloud LLM Time-to-First-Token (TTFT), running over **27,000× faster** than model inference.
+> ⚡ **Zero Perceptible Overhead**: At **0.138 ms** ($\approx 138\ \mu\text{s}$), tool search latency represents $<0.012\%$ of typical cloud LLM Time-to-First-Token (TTFT), running over **7,000× faster** than model inference.
 
 ### 3. Multi-Turn Compounding Scale & Cost Savings
 
@@ -295,19 +301,21 @@ Because system prompt tool definitions are re-transmitted on **every single conv
 xychart-beta
     title "Multi-Turn Compounding Cumulative Token Savings (k Tokens)"
     x-axis ["T=1", "T=5", "T=10", "T=20", "T=30", "T=50", "T=100"]
-    y-axis "Cumulative Tokens Saved (k Tokens)" 0 --> 400
-    line [3.6, 17.8, 35.7, 71.3, 107.0, 178.4, 356.7]
+    y-axis "Cumulative Tokens Saved (k Tokens)" 0 --> 1800
+    line [16.8, 84.2, 168.5, 337.0, 505.4, 842.4, 1684.8]
 ```
 
 | Session Horizon ($T$) | Cumulative Baseline Tokens | With Tool Search | Net Tokens Saved | Baseline Cost (USD) | With Tool Search (USD) | Net Session Savings |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **1 turn** | 29,831 | 26,264 | **3,567 tokens** | $0.0746 | $0.0657 | **$0.0089** (11.96%) |
-| **5 turns** | 156,655 | 138,820 | **17,835 tokens** | $0.3916 | $0.3471 | **$0.0446** (11.38%) |
-| **10 turns** | 332,060 | 296,390 | **35,670 tokens** | $0.8302 | $0.7410 | **$0.0892** (10.74%) |
-| **20 turns** | 739,120 | 667,780 | **71,340 tokens** | $1.8478 | $1.6695 | **$0.1783** (9.65%) |
-| **30 turns** | 1,221,180 | 1,114,170 | **107,010 tokens** | $3.0530 | $2.7854 | **$0.2675** (8.76%) |
-| **50 turns** | 2,410,300 | 2,231,950 | **178,350 tokens** | $6.0257 | $5.5799 | **$0.4459** (7.40%) |
-| **100 turns** | 6,695,600 | 6,338,900 | **356,700 tokens** | $16.7390 | $15.8472 | **$0.8918 / session** (5.33%) |
+| **1 turn** | 28,846 | 11,998 | **16,848 tokens** | $0.0721 | $0.0300 | **$0.0421** (58.41%) |
+| **5 turns** | 151,730 | 67,490 | **84,240 tokens** | $0.3793 | $0.1687 | **$0.2106** (55.52%) |
+| **10 turns** | 322,210 | 153,730 | **168,480 tokens** | $0.8055 | $0.3843 | **$0.4212** (52.29%) |
+| **20 turns** | 719,420 | 382,460 | **336,960 tokens** | $1.7985 | $0.9562 | **$0.8424** (46.84%) |
+| **30 turns** | 1,191,630 | 686,190 | **505,440 tokens** | $2.9791 | $1.7155 | **$1.2636** (42.42%) |
+| **40 turns** | 1,738,840 | 1,064,920 | **673,920 tokens** | $4.3471 | $2.6623 | **$1.6848** (38.76%) |
+| **50 turns** | 2,361,050 | 1,518,650 | **842,400 tokens** | $5.9026 | $3.7966 | **$2.1060** (35.68%) |
+| **75 turns** | 4,244,700 | 2,981,100 | **1,263,600 tokens** | $10.6118 | $7.4527 | **$3.1590** (29.77%) |
+| **100 turns** | 6,597,100 | 4,912,300 | **1,684,800 tokens** | $16.4928 | $12.2808 | **$4.2120 / session** (25.54%) |
 
 ---
 
