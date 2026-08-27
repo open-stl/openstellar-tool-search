@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import process from 'node:process';
 import type { ToolMeta } from '../types.js';
 import { resolveStorageDir, safeReadJson, safeWriteJson } from '../utils/storage-path.js';
+import { normalizeToolId } from '../utils/tool-id.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -260,9 +261,9 @@ export class DeliveryHistory {
     if (!session) return true;
     let existing = session.get(canonicalID);
     if (!existing) {
-      const norm = canonicalID.replace(/[-_]/g, '_');
+      const norm = normalizeToolId(canonicalID);
       for (const [key, val] of session.entries()) {
-        if (key.replace(/[-_]/g, '_') === norm) {
+        if (normalizeToolId(key) === norm) {
           existing = val;
           break;
         }
@@ -308,9 +309,9 @@ export class DeliveryHistory {
     const session = this.history.get(sessionID);
     if (!session) return;
     const toRemove = new Set(canonicalIDs);
-    const toRemoveNorm = new Set(Array.from(canonicalIDs).map((id) => id.replace(/[-_]/g, '_')));
+    const toRemoveNorm = new Set(Array.from(canonicalIDs).map(normalizeToolId));
     for (const id of Array.from(session.keys())) {
-      if (toRemove.has(id) || toRemoveNorm.has(id.replace(/[-_]/g, '_'))) {
+      if (toRemove.has(id) || toRemoveNorm.has(normalizeToolId(id))) {
         session.delete(id);
       }
     }

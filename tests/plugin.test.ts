@@ -779,6 +779,43 @@ describe('ToolSearchPlugin', () => {
     expect(output.context[0]).toContain('tool');
   });
 
+  it('exempts tools from deferral when alwaysLoad specifies mixed-case, hyphens, or whitespace', async () => {
+    const hooks = await ToolSearchPlugin({} as any, {
+      mode: 'keyword',
+      alwaysLoad: ['  READ  ', 'github-grep_searchGitHub'],
+    });
+
+    const readOutput = { description: 'Read a file or directory. Long description here.', parameters: { type: 'object' } };
+    await hooks['tool.definition']!({ toolID: 'read' }, readOutput);
+    // Description should NOT be truncated or deferred
+    expect(readOutput.description).toBe('Read a file or directory. Long description here.');
+    expect(readOutput.description).not.toContain('[deferred]');
+
+    const githubOutput = { description: 'Find real-world code examples. Long details here.', parameters: { type: 'object' } };
+    await hooks['tool.definition']!({ toolID: 'github_grep_searchGitHub' }, githubOutput);
+    expect(githubOutput.description).toBe('Find real-world code examples. Long details here.');
+    expect(githubOutput.description).not.toContain('[deferred]');
+
+    // Other tools are still deferred
+    const deferredOutput = { description: 'First sentence here. Second sentence details.', parameters: { type: 'object' } };
+    await hooks['tool.definition']!({ toolID: 'other_tool' }, deferredOutput);
+    expect(deferredOutput.description).toContain('[deferred]');
+
+    // Execution of alwaysLoad tools does not require search first
+    const sessionID = 'always-load-mixed-sess';
+    await expect(
+      hooks['tool.execute.before']!({ tool: 'read', sessionID } as any, {} as any)
+    ).resolves.not.toThrow();
+
+    await expect(
+      hooks['tool.execute.before']!({ tool: 'github_grep_searchGitHub', sessionID } as any, {} as any)
+    ).resolves.not.toThrow();
+
+    await expect(
+      hooks['tool.execute.before']!({ tool: 'other_tool', sessionID } as any, {} as any)
+    ).rejects.toThrow('[Tool Search Required]');
+  });
+
   it('handles session.deleted event and other event types', async () => {
     const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await expect(

@@ -205,6 +205,50 @@ describe('AuthorizationState & AuthPersistence', () => {
     state.revoke('sess-1', ['codebase_memory_list_projects']);
     expect(state.isAuthorized('sess-1', 'codebase-memory_list_projects')).toBe(false);
   });
+
+  it('normalizes tool IDs across case, whitespace, and hyphens/underscores in alwaysOn and resetTools', () => {
+    const persistence = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
+    const state = new AuthorizationState({
+      alwaysOn: ['  READ  ', 'github-grep_searchGitHub', 'WRITE'],
+      resetTools: ['  COMPRESS  ', 'my-reset_tool'],
+      persistence,
+    });
+
+    // registerTool returns false (not deferred) for normalized alwaysOn matches
+    expect(state.registerTool('read')).toBe(false);
+    expect(state.registerTool('READ')).toBe(false);
+    expect(state.registerTool('write')).toBe(false);
+    expect(state.registerTool('github_grep_searchgithub')).toBe(false);
+    expect(state.registerTool('github-grep_searchGitHub')).toBe(false);
+    expect(state.deferredCount).toBe(0);
+
+    // registerTool returns true (deferred) for other tools
+    expect(state.registerTool('custom_tool')).toBe(true);
+    expect(state.deferredCount).toBe(1);
+
+    // requiresReminder is false for normalized alwaysOn tools
+    expect(state.requiresReminder('sess-1', 'read', 'read')).toBe(false);
+    expect(state.requiresReminder('sess-1', 'READ', 'read')).toBe(false);
+    expect(state.requiresReminder('sess-1', 'github_grep_searchgithub', 'github_grep_searchGitHub')).toBe(false);
+
+    // addAlwaysOn removes previously deferred tool under normalized matching
+    state.addAlwaysOn('CUSTOM-TOOL');
+    expect(state.deferredCount).toBe(0);
+    expect(state.requiresReminder('sess-1', 'custom_tool', 'custom_tool')).toBe(false);
+
+    // resetIfConfigured works case-insensitively and with hyphens/underscores
+    state.authorize('sess-1', [{ id: 'some_tool', description: 'desc', parameters: {} }]);
+    expect(state.isAuthorized('sess-1', 'some_tool')).toBe(true);
+
+    expect(state.resetIfConfigured('compress', 'sess-1')).toBe(true);
+    expect(state.isAuthorized('sess-1', 'some_tool')).toBe(false);
+
+    state.authorize('sess-1', [{ id: 'some_tool', description: 'desc', parameters: {} }]);
+    expect(state.isAuthorized('sess-1', 'some_tool')).toBe(true);
+
+    expect(state.resetIfConfigured('my_reset_tool', 'sess-1')).toBe(true);
+    expect(state.isAuthorized('sess-1', 'some_tool')).toBe(false);
+  });
 });
 
 // ============================================================================

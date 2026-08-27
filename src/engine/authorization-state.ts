@@ -3,6 +3,9 @@ import {
   AuthPersistence,
   type PersistedToolAuthorization,
 } from './auth-persistence.js';
+import { normalizeToolId } from '../utils/tool-id.js';
+
+export { normalizeToolId };
 
 const CANONICAL_PREFIX = '@canonical:';
 
@@ -31,10 +34,6 @@ function canonicalIdOf(value: PersistedToolAuthorization): string | undefined {
   return value.kind === 'canonical-tool' && value.version === 1 ? value.canonicalId : undefined;
 }
 
-function normalizeToolId(id: string): string {
-  return id.replace(/[-_]/g, '_');
-}
-
 /**
  * F11 migration: convert legacy string-typed entries to canonical object form.
  * - "@canonical:foo" -> { kind: 'canonical-tool', version: 1, canonicalId: 'foo' }
@@ -61,15 +60,20 @@ interface AuthorizationStateOptions {
 /** Owns session authorization policy, transitions, and their durable sequencing. */
 export class AuthorizationState {
   private readonly alwaysOn: Set<string>;
+  private readonly normalizedAlwaysOn: Set<string>;
   private readonly resetTools: Set<string>;
+  private readonly normalizedResetTools: Set<string>;
   private readonly deferredTools = new Set<string>();
+  private readonly normalizedDeferredTools = new Set<string>();
   private readonly persistence: AuthPersistence;
   private readonly authorizations: Map<string, Set<PersistedToolAuthorization>>;
   private readonly lastSeen: Map<string, number>;
 
   constructor(options: AuthorizationStateOptions) {
     this.alwaysOn = new Set(options.alwaysOn);
+    this.normalizedAlwaysOn = new Set(Array.from(options.alwaysOn).map(normalizeToolId));
     this.resetTools = new Set(options.resetTools);
+    this.normalizedResetTools = new Set(Array.from(options.resetTools).map(normalizeToolId));
     this.persistence = options.persistence ?? new AuthPersistence();
     const loaded = this.persistence.load();
     this.authorizations = loaded.authorizations;
@@ -90,15 +94,33 @@ export class AuthorizationState {
     if (migrated) this.persistence.save(this.authorizations, this.lastSeen);
   }
 
+  private isAlwaysOn(id: string): boolean {
+    return this.alwaysOn.has(id) || this.normalizedAlwaysOn.has(normalizeToolId(id));
+  }
+
+  private isDeferred(id: string): boolean {
+    return this.deferredTools.has(id) || this.normalizedDeferredTools.has(normalizeToolId(id));
+  }
+
   public registerTool(toolID: string): boolean {
-    const deferred = !this.alwaysOn.has(toolID);
-    if (deferred) this.deferredTools.add(toolID);
+    const deferred = !this.isAlwaysOn(toolID);
+    if (deferred) {
+      this.deferredTools.add(toolID);
+      this.normalizedDeferredTools.add(normalizeToolId(toolID));
+    }
     return deferred;
   }
 
   public addAlwaysOn(toolID: string): void {
     this.alwaysOn.add(toolID);
-    this.deferredTools.delete(toolID);
+    const norm = normalizeToolId(toolID);
+    this.normalizedAlwaysOn.add(norm);
+    this.normalizedDeferredTools.delete(norm);
+    for (const d of Array.from(this.deferredTools)) {
+      if (normalizeToolId(d) === norm) {
+        this.deferredTools.delete(d);
+      }
+    }
   }
 
   public get deferredCount(): number {
@@ -133,16 +155,7 @@ export class AuthorizationState {
     // F2 fix: only compare executedID and canonicalID against alwaysOn — NOT baseID.
     // Stripping _ide from executedID would falsely exempt foo_ide when the
     // separate tool foo happens to be alwaysOn.
-    const isAlwaysOn = (id: string) => {
-      if (this.alwaysOn.has(id)) return true;
-      const norm = normalizeToolId(id);
-      for (const a of this.alwaysOn) {
-        if (normalizeToolId(a) === norm) return true;
-      }
-      return false;
-    };
-
-    if (isAlwaysOn(executedID) || isAlwaysOn(canonicalID)) return false;
+    if (this.isAlwaysOn(executedID) || this.isAlwaysOn(canonicalID)) return false;
 
     // baseID is still needed for the deferred-tools and authorization checks so
     // that double-cloaked IDs like bash_ide_ide (canonicalID stays 'bash_ide_ide'
@@ -150,20 +163,11 @@ export class AuthorizationState {
     // the underlying tool bash is deferred.
     const baseID = executedID.replace(/(_ide)+$/, '');
 
-    const isDeferred = (id: string) => {
-      if (this.deferredTools.has(id)) return true;
-      const norm = normalizeToolId(id);
-      for (const d of this.deferredTools) {
-        if (normalizeToolId(d) === norm) return true;
-      }
-      return false;
-    };
-
-    const targetID = this.deferredTools.has(canonicalID) || isDeferred(canonicalID) ? canonicalID : baseID;
+    const targetID = this.deferredTools.has(canonicalID) || this.isDeferred(canonicalID) ? canonicalID : baseID;
     const normTarget = normalizeToolId(targetID);
     const normCanon = normalizeToolId(canonicalID);
 
-    if (!isDeferred(executedID) && !isDeferred(canonicalID) && !isDeferred(baseID)) return false;
+    if (!this.isDeferred(executedID) && !this.isDeferred(canonicalID) && !this.isDeferred(baseID)) return false;
     if (!sessionID) return true;
     const authorized = this.authorizations.get(sessionID);
     return authorized === undefined
@@ -206,8 +210,13 @@ export class AuthorizationState {
     this.persistence.save(this.authorizations, this.lastSeen);
   }
 
+  private isResetTool(id: string): boolean {
+    return this.resetTools.has(id) || this.normalizedResetTools.has(normalizeToolId(id));
+  }
+
   public resetIfConfigured(toolID: string, sessionID: string | undefined): boolean {
-    if (!this.resetTools.has(toolID)) return false;
+    const baseID = toolID.replace(/(_ide)+$/, '');
+    if (!this.isResetTool(toolID) && !this.isResetTool(baseID)) return false;
     this.resetSession(sessionID);
     return true;
   }

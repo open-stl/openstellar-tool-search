@@ -8,6 +8,7 @@ import { UpdateCheckLifecycle } from '../hooks/update-check.js';
 import { McpWiring, parseMcpConfig } from '../hooks/mcp-wiring.js';
 import { DEFAULT_WARMUP_TIMEOUT_MS } from '../mcp/mcp-tool-provider.js';
 import { toast } from '../hooks/toast.js';
+import { sanitizeStringList } from '../utils/tool-id.js';
 
 export const ALLOWED_CONFIG_KEYS = new Set(['alwaysLoad', 'maxResults', 'mode', 'resetTools', 'mcp', 'timeout']);
 
@@ -98,9 +99,9 @@ export async function bootstrapPluginCore(
   validateConfig(rawOpts);
 
   const opts = rawOpts as ToolSearchConfig;
-  const resetToolIDs = new Set(['compress', ...(opts.resetTools ?? [])]);
+  const alwaysLoadTools = sanitizeStringList(opts.alwaysLoad);
+  const resetToolIDs = new Set(['compress', ...sanitizeStringList(opts.resetTools)]);
   const maxResults = opts.maxResults ?? 5;
-  const alwaysLoadTools = opts.alwaysLoad ?? [];
   const deferLabel = DEFAULT_DEFER;
   const isKeywordMode = opts.mode === 'keyword';
 
