@@ -105,6 +105,35 @@ interface SystemPromptState {
  * surfaced to the model prompt. Exposes the search tools the plugin wires
  * into OpenCode, plus the operations the plugin hooks delegate to.
  */
+/**
+ * Expands a Sleev message ID or range (e.g. "m0001-m0005", "m0011", "m4-m8")
+ * into normalized set of message identifiers.
+ */
+export function expandSleevId(id: string): string[] {
+  const trimmed = id.trim();
+  const rangeMatch = trimmed.match(/^m?(\d+)-m?(\d+)$/i);
+  if (rangeMatch) {
+    const start = parseInt(rangeMatch[1], 10);
+    const end = parseInt(rangeMatch[2], 10);
+    const padLen = rangeMatch[1].length;
+    const result: string[] = [];
+    const min = Math.min(start, end);
+    const max = Math.max(start, end);
+    for (let i = min; i <= max; i++) {
+      result.push('m' + String(i).padStart(padLen, '0'));
+      result.push(String(i));
+      result.push('m' + String(i));
+    }
+    return result;
+  }
+  const singleMatch = trimmed.match(/^m?(\d+)$/i);
+  if (singleMatch) {
+    const num = parseInt(singleMatch[1], 10);
+    return ['m' + String(num).padStart(singleMatch[1].length, '0'), String(num), 'm' + String(num), trimmed];
+  }
+  return [trimmed];
+}
+
 export class SessionEngine {
   public readonly vault: ToolVault;
   public readonly sessionRegistry: SessionToolRegistry;
@@ -358,7 +387,9 @@ export class SessionEngine {
                 const input = (state?.input || p.input) as Record<string, unknown> | undefined;
                 if (Array.isArray(input?.ids)) {
                   for (const id of input.ids) {
-                    if (typeof id === 'string') prunedIds.add(id);
+                    if (typeof id === 'string') {
+                      for (const expanded of expandSleevId(id)) prunedIds.add(expanded);
+                    }
                   }
                 }
               }
@@ -377,7 +408,9 @@ export class SessionEngine {
                 const parsedArgs = JSON.parse(fn.arguments);
                 if (Array.isArray(parsedArgs.ids)) {
                   for (const id of parsedArgs.ids) {
-                    if (typeof id === 'string') prunedIds.add(id);
+                    if (typeof id === 'string') {
+                      for (const expanded of expandSleevId(id)) prunedIds.add(expanded);
+                    }
                   }
                 }
               } catch {
@@ -401,7 +434,7 @@ export class SessionEngine {
       const tagMatch = fullText.match(/<sleev-id-(m\d+)>/i);
       if (tagMatch) {
         const msgId = tagMatch[1];
-        if (prunedIds.has(msgId)) {
+        if (prunedIds.has(msgId) || prunedIds.has('m' + msgId)) {
           // This message has been pruned by Sleev, skip it
           continue;
         }

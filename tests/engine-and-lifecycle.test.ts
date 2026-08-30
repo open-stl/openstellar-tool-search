@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, readFileSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync, rmSync, mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import {
   AuthPersistence,
   getDefaultAuthStoragePath,
@@ -13,6 +13,7 @@ import {
   SessionEngine,
   TOOL_SEARCH_PARAM_DESC,
   TOOL_SEARCH_REGEX_PARAM_DESC,
+  expandSleevId,
 } from '../src/engine/session-engine.js';
 import {
   DeliveryHistory,
@@ -587,6 +588,132 @@ describe('Storage Path & Transformers Env Utilities', () => {
     // Safe when passed null / undefined / primitives
     expect(() => configureTransformersEnv(null)).not.toThrow();
     expect(() => configureTransformersEnv(undefined)).not.toThrow();
+  });
+});
+
+// ============================================================================
+// Sleev Compression Synchronization & AgentMemory Re-Authorization
+// ============================================================================
+
+describe('Sleev Compression & AgentMemory Tool Synchronization', () => {
+  it('expandSleevId expands single IDs and inclusive ranges accurately', () => {
+    expect(expandSleevId('m0001')).toContain('m0001');
+    expect(expandSleevId('m0001')).toContain('1');
+
+    const range = expandSleevId('m0001-m0005');
+    expect(range).toContain('m0001');
+    expect(range).toContain('m0002');
+    expect(range).toContain('m0003');
+    expect(range).toContain('m0004');
+    expect(range).toContain('m0005');
+
+    const shortRange = expandSleevId('m4-m6');
+    expect(shortRange).toContain('m4');
+    expect(shortRange).toContain('m5');
+    expect(shortRange).toContain('m6');
+  });
+
+  it('revokes AgentMemory tools when their delivery messages are pruned by Sleev range compression', () => {
+    const engine = new SessionEngine(
+      {} as any,
+      {
+        alwaysOn: [],
+        resetTools: ['compress'],
+        maxResults: 5,
+        deferLabel: '[deferred]',
+        embedding: { enabled: false },
+      } as any,
+    );
+
+    const sessionID = 'sess-sleev-agentmemory';
+
+    // 0. Register tools as deferred
+    engine.sessionRegistry.registerTool('agentmemory_memory_recall');
+    engine.sessionRegistry.registerTool('agentmemory_memory_save');
+
+    // 1. Authorize agentmemory_memory_recall and agentmemory_memory_save
+    engine.sessionRegistry.processSearchResult(
+      sessionID,
+      [
+        { id: 'agentmemory_memory_recall', description: 'Search past session observations', parameters: { type: 'object' } },
+        { id: 'agentmemory_memory_save', description: 'Save insight to memory', parameters: { type: 'object' } },
+      ],
+      5,
+    );
+
+    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(true);
+    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_save')).toBe(true);
+
+    // 2. Simulate conversation context where agentmemory_memory_recall was delivered in message m0002,
+    //    and agentmemory_memory_save was delivered in message m0006
+    const messages = [
+      {
+        role: 'user',
+        content: '<sleev-id-m0001>User asking for memory recall</sleev-id-m0001>',
+      },
+      {
+        role: 'assistant',
+        content: '<sleev-id-m0002>Found 1 tool(s):\n\nagentmemory_memory_recall: Search past session observations\n  parameters: {"type":"object"}</sleev-id-m0002>',
+      },
+      {
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool',
+            tool: 'compress',
+            status: 'completed',
+            input: {
+              ids: ['m0001-m0003'], // Compress messages m0001 through m0003 (including m0002 where recall was delivered!)
+            },
+          },
+        ],
+      },
+      {
+        role: 'user',
+        content: '<sleev-id-m0005>Now save this insight</sleev-id-m0005>',
+      },
+      {
+        role: 'assistant',
+        content: '<sleev-id-m0006>Found 1 tool(s):\n\nagentmemory_memory_save: Save insight to memory\n  parameters: {"type":"object"}</sleev-id-m0006>',
+      },
+    ];
+
+    // 3. Run syncSleevCompression
+    const revoked = engine.syncSleevCompression(sessionID, messages);
+
+    // agentmemory_memory_recall was inside pruned message range m0001-m0003 -> revoked!
+    expect(revoked).toContain('agentmemory_memory_recall');
+    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(false);
+
+    // agentmemory_memory_save was in active message m0006 -> still authorized!
+    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_save')).toBe(true);
+
+    // 4. Attempting to call agentmemory_memory_recall without re-search throws [Tool Search Required]
+    expect(() => {
+      engine.assertAuthorized('agentmemory_memory_recall', sessionID, 'agentmemory_memory_recall');
+    }).toThrowError(/\[Tool Search Required\]/);
+
+    // 5. Calling agentmemory_memory_save succeeds without error
+    expect(() => {
+      engine.assertAuthorized('agentmemory_memory_save', sessionID, 'agentmemory_memory_save');
+    }).not.toThrow();
+
+    // 6. Re-searching agentmemory_memory_recall re-delivers schema and re-authorizes it cleanly
+    const reAuthResult = engine.sessionRegistry.processSearchResult(
+      sessionID,
+      [
+        { id: 'agentmemory_memory_recall', description: 'Search past session observations', parameters: { type: 'object' } },
+      ],
+      5,
+    );
+
+    // Because delivery history was removed upon revocation, re-search delivers full schema (kind: 'new')
+    expect(reAuthResult.kind).toBe('new');
+    expect(reAuthResult.responseText).toContain('agentmemory_memory_recall');
+    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(true);
+    expect(() => {
+      engine.assertAuthorized('agentmemory_memory_recall', sessionID, 'agentmemory_memory_recall');
+    }).not.toThrow();
   });
 });
 
