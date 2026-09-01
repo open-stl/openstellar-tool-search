@@ -715,5 +715,118 @@ describe('Sleev Compression & AgentMemory Tool Synchronization', () => {
       engine.assertAuthorized('agentmemory_memory_recall', sessionID, 'agentmemory_memory_recall');
     }).not.toThrow();
   });
+
+  it('does NOT revoke authorized tools that still exist in the durable tools payload after Sleev pruning', () => {
+    const engine = new SessionEngine(
+      {} as any,
+      {
+        alwaysOn: [],
+        resetTools: ['compress'],
+        maxResults: 5,
+        deferLabel: '[deferred]',
+        embedding: { enabled: false },
+      } as any,
+    );
+
+    const sessionID = 'sess-sleev-durable';
+
+    // 0. Register + authorize agentmemory_memory_recall
+    engine.sessionRegistry.registerTool('agentmemory_memory_recall');
+    engine.sessionRegistry.processSearchResult(
+      sessionID,
+      [{ id: 'agentmemory_memory_recall', description: 'Search past session observations', parameters: { type: 'object' } }],
+      5,
+    );
+    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(true);
+
+    // 1. Sleev prunes EVERY message INCLUDING the delivery message for agentmemory_memory_recall
+    const messages = [
+      {
+        role: 'user',
+        content: '<sleev-id-m0001>User asking for memory recall</sleev-id-m0001>',
+      },
+      {
+        role: 'assistant',
+        content: '<sleev-id-m0002>Found 1 tool(s):\n\nagentmemory_memory_recall: Search past session observations\n  parameters: {"type":"object"}</sleev-id-m0002>',
+      },
+      {
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool',
+            tool: 'compress',
+            status: 'completed',
+            input: { ids: ['m0001-m0002'] }, // prunes everything including m0002 (delivery)
+          },
+        ],
+      },
+    ];
+
+    // 2. Tools payload (durable channel, survives Sleev) still contains the tool
+    const tools = {
+      agentmemory_memory_recall: { description: 'Search past session observations', input: { type: 'object' } },
+    };
+
+    // 3. Run syncSleevCompression WITH tools -> MUST NOT revoke
+    const revoked = engine.syncSleevCompression(sessionID, messages, tools);
+    expect(revoked).not.toContain('agentmemory_memory_recall');
+    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(true);
+    expect(() => {
+      engine.assertAuthorized('agentmemory_memory_recall', sessionID, 'agentmemory_memory_recall');
+    }).not.toThrow();
+  });
+
+  it('revokes when the durable tools payload is provided but the authorized tool is NOT in it (server disconnected)', () => {
+    const engine = new SessionEngine(
+      {} as any,
+      {
+        alwaysOn: [],
+        resetTools: ['compress'],
+        maxResults: 5,
+        deferLabel: '[deferred]',
+        embedding: { enabled: false },
+      } as any,
+    );
+
+    const sessionID = 'sess-sleev-gone';
+
+    // 0. Register + authorize agentmemory_memory_recall
+    engine.sessionRegistry.registerTool('agentmemory_memory_recall');
+    engine.sessionRegistry.processSearchResult(
+      sessionID,
+      [{ id: 'agentmemory_memory_recall', description: 'Search past session observations', parameters: { type: 'object' } }],
+      5,
+    );
+    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(true);
+
+    // 1. All messages pruned (no tool name anywhere in text)
+    const messages = [
+      { role: 'user', content: '<sleev-id-m0001>User asking for memory recall</sleev-id-m0001>' },
+      {
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool',
+            tool: 'compress',
+            status: 'completed',
+            input: { ids: ['m0001-m0002'] },
+          },
+        ],
+      },
+    ];
+
+    // 2. Durable tools payload provided (open handed back tools) but tool NOT in it
+    const tools = {
+      some_other_tool: { description: 'other', input: { type: 'object' } },
+    };
+
+    // 3. Must revoke: tool absent from BOTH durable channel AND message text
+    const revoked = engine.syncSleevCompression(sessionID, messages, tools);
+    expect(revoked).toContain('agentmemory_memory_recall');
+    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(false);
+    expect(() => {
+      engine.assertAuthorized('agentmemory_memory_recall', sessionID, 'agentmemory_memory_recall');
+    }).toThrowError(/\[Tool Search Required\]/);
+  });
 });
 

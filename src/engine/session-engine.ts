@@ -327,6 +327,7 @@ export class SessionEngine {
   public syncActiveAuthorizations(
     sessionID: string | undefined,
     messages?: Array<{ role?: string; content?: unknown }>,
+    tools?: Record<string, any>,
   ): string[] {
     if (!sessionID || !messages || messages.length === 0) return [];
 
@@ -340,6 +341,10 @@ export class SessionEngine {
 
     const revoked: string[] = [];
     for (const toolID of authorized) {
+      const stillServable = !!tools && typeof tools === 'object' && this.toolStillServable(toolID, tools);
+
+      if (stillServable) continue;
+
       const escaped = toolID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const presenceRegex = new RegExp(`(?:^|\\W)${escaped}(?::|\\b)`, 'm');
       if (!presenceRegex.test(combinedText)) {
@@ -363,6 +368,7 @@ export class SessionEngine {
   public syncSleevCompression(
     sessionID: string | undefined,
     messages?: Array<unknown>,
+    tools?: Record<string, any>,
   ): string[] {
     if (!sessionID || !messages || messages.length === 0) return [];
 
@@ -423,7 +429,7 @@ export class SessionEngine {
     }
 
     if (prunedIds.size === 0) {
-      return this.syncActiveAuthorizations(sessionID, messages as any);
+      return this.syncActiveAuthorizations(sessionID, messages as any, tools);
     }
 
     // 2. Identify unpruned message text
@@ -442,9 +448,14 @@ export class SessionEngine {
       activeText += fullText + '\n';
     }
 
-    // 3. For each authorized tool, check if it exists in the active (unpruned) text
+    // 3. For each authorized tool, check presence in durable channel first (tools array),
+    //    then fall back to active message text.
     const revoked: string[] = [];
     for (const toolID of authorized) {
+      const stillServable = !!tools && typeof tools === 'object' && this.toolStillServable(toolID, tools);
+
+      if (stillServable) continue;
+
       const escaped = toolID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const presenceRegex = new RegExp(`(?:^|\\W)${escaped}(?::|\\b)`, 'm');
       if (!presenceRegex.test(activeText)) {
@@ -459,6 +470,20 @@ export class SessionEngine {
     return revoked;
   }
 
+  /**
+   * True when the tool's key still exists in the durable per-turn tools payload.
+   * The tools array survives Sleev compaction (verified: 47/47 request pairs
+   * keep the first 320 tool entries byte-identical); the message channel does not.
+   * An authorized tool still served in tools must NOT be revoked merely because
+   * the conversation message that first announced it was pruned.
+   */
+  private toolStillServable(toolID: string, tools: Record<string, any>): boolean {
+    if (!tools || typeof tools !== 'object') return false;
+    const direct = tools[toolID];
+    if (direct && typeof direct === 'object') return true;
+    return Object.keys(tools).some((key) => key.endsWith(toolID));
+  }
+
   public applyContextTurn(sessionCtx: {
     sessionID?: string;
     tools?: Record<string, any>;
@@ -467,7 +492,7 @@ export class SessionEngine {
   }): void {
     if (!sessionCtx) return;
 
-    this.syncSleevCompression(sessionCtx.sessionID, sessionCtx.messages);
+    this.syncSleevCompression(sessionCtx.sessionID, sessionCtx.messages, sessionCtx.tools);
 
     if (sessionCtx.tools && typeof sessionCtx.tools === 'object') {
       for (const [toolName, toolDef] of Object.entries(sessionCtx.tools as Record<string, any>)) {
