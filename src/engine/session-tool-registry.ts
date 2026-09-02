@@ -21,10 +21,11 @@ interface SearchResultProcessing {
 }
 
 function formatHit(r: ToolMeta): string {
-  const paramsInfo = r.parameters && typeof r.parameters === 'object' && Object.keys(r.parameters).length > 0
-    ? `\n  parameters: ${JSON.stringify(r.parameters)}`
-    : '';
-  return `${r.id}: ${r.description}${paramsInfo}`;
+  // Search responses carry name + description only. The full parameter schema
+  // always lives in the tools array: v1 never truncates parameters, and v2
+  // re-injects the full schema after search-time authorization. Returning
+  // parameters here would duplicate data in a Sleev-prunable channel.
+  return `${r.id}: ${r.description}`;
 }
 
 function formatNoOpDiscovery(deliveredHits: ToolMeta[]): string {

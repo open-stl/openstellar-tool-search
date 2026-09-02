@@ -653,7 +653,7 @@ describe('Sleev Compression & AgentMemory Tool Synchronization', () => {
       },
       {
         role: 'assistant',
-        content: '<sleev-id-m0002>Found 1 tool(s):\n\nagentmemory_memory_recall: Search past session observations\n  parameters: {"type":"object"}</sleev-id-m0002>',
+        content: '<sleev-id-m0002>Found 1 tool(s):\n\nagentmemory_memory_recall: Search past session observations</sleev-id-m0002>',
       },
       {
         role: 'assistant',
@@ -674,7 +674,7 @@ describe('Sleev Compression & AgentMemory Tool Synchronization', () => {
       },
       {
         role: 'assistant',
-        content: '<sleev-id-m0006>Found 1 tool(s):\n\nagentmemory_memory_save: Save insight to memory\n  parameters: {"type":"object"}</sleev-id-m0006>',
+        content: '<sleev-id-m0006>Found 1 tool(s):\n\nagentmemory_memory_save: Save insight to memory</sleev-id-m0006>',
       },
     ];
 
@@ -747,7 +747,7 @@ describe('Sleev Compression & AgentMemory Tool Synchronization', () => {
       },
       {
         role: 'assistant',
-        content: '<sleev-id-m0002>Found 1 tool(s):\n\nagentmemory_memory_recall: Search past session observations\n  parameters: {"type":"object"}</sleev-id-m0002>',
+        content: '<sleev-id-m0002>Found 1 tool(s):\n\nagentmemory_memory_recall: Search past session observations</sleev-id-m0002>',
       },
       {
         role: 'assistant',
