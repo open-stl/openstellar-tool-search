@@ -299,6 +299,8 @@ describe('SessionToolRegistry & DeliveryHistory', () => {
     const res = registry.processSearchResult('session-1', [toolA, toolB], 10);
     expect(res.kind).toBe('new');
     expect(res.hits).toHaveLength(2);
+    expect(res.responseText).toContain('tool_a: Tool A description');
+    expect(res.responseText).not.toContain('parameters:');
     expect(registry.isAuthorized('session-1', 'tool_a')).toBe(true);
     expect(registry.isAuthorized('session-1', 'tool_b')).toBe(true);
   });

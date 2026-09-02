@@ -192,7 +192,7 @@ export class SessionEngine {
     const sessionKey = sessionID ?? 'default';
     if (this.sessionRegistry.requiresReminder(sessionID, executedTool, canonicalTool)) {
       throw new Error(
-        `[Tool Search Required] Tool "${executedTool}" has not been searched in session "${sessionKey}". Call tool_search_regex({ pattern: "^${canonicalTool}$" }) to inspect full description and parameter schema before calling this tool.`,
+        `[Tool Search Required] Tool "${executedTool}" has not been searched in session "${sessionKey}". Call tool_search_regex({ pattern: "^${canonicalTool}$" }) to authorize it — the full parameter schema is served in the tools array after authorization.`,
       );
     }
   }
