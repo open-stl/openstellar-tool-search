@@ -47,7 +47,8 @@ export class ToolStore {
     const safe = description ?? '';
 
     // Guard against overwriting stored full descriptions with truncated `[deferred]` descriptions
-    // when tool.definition runs multiple times across turns
+    // when tool.definition runs multiple times across turns. The defer label is a FIXED constant
+    // — it is not user-configurable — so this literal is the single source of truth.
     if (old && !old.description.includes('[deferred]') && safe.includes('[deferred]')) {
       return false;
     }

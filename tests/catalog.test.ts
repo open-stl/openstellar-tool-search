@@ -34,6 +34,21 @@ describe('ToolVault & ToolStore', () => {
     expect(vault.get('nonexistent')).toBeUndefined();
   });
 
+  it('guards against truncated-description poisoning (defer label is the fixed [deferred])', () => {
+    const vault = new ToolVault({ embedding: { enabled: false } });
+
+    // 1. Full description stored first (as plugin.tool.definition captures pristine before truncation)
+    vault.add(toolA.id, 'Record changes to the repository with detailed schema docs', toolA.parameters);
+    expect(vault.get('git_commit')?.description).toBe('Record changes to the repository with detailed schema docs');
+
+    // 2. Truncated description with the FIXED label arrives later (as applyContextTurn does)
+    vault.add(toolA.id, 'Record changes to the repository [deferred]', { type: 'object', properties: { reason: { type: 'string' } } });
+
+    // 3. The full description must be preserved — truncated text must NOT overwrite it
+    expect(vault.get('git_commit')?.description).toBe('Record changes to the repository with detailed schema docs');
+    expect(vault.get('git_commit')?.parameters).toEqual(toolA.parameters);
+  });
+
   it('resolves _ide aliases to canonical tools', () => {
     const store = new ToolStore();
     store.add(toolA.id, toolA.description, toolA.parameters);
