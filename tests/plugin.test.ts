@@ -259,7 +259,7 @@ describe('ToolSearchPlugin', () => {
     await expect(
       hooks['tool.execute.before']!({ tool: 'unsearched_tool', sessionID: 'strict-error-session' } as any, {} as any)
     ).rejects.toThrow(
-      '[Tool Search Required] Tool "unsearched_tool" has not been searched in session "strict-error-session". Call tool_search_regex({ pattern: "^unsearched_tool$" }) to authorize it — the full parameter schema is served in the tools array after authorization.'
+      '[Tool Search Required] Tool "unsearched_tool" has not been searched in session "strict-error-session". Call tool_search_regex({ pattern: "^unsearched_tool$" }) to retrieve the full description and authorize this tool.'
     );
   });
 
