@@ -265,17 +265,14 @@ describe('OpenCode 2.0 setupV2', () => {
     expect(sessionCtx.system.length).toBe(1);
     expect(sessionCtx.system[0]).toContain('tool_search_regex');
 
-    // bash is deferred
+    // bash is deferred (description only — parameters stay intact, unified v1/v2 contract)
     expect(sessionCtx.tools.bash.description).toBe('Run arbitrary bash commands on host. [deferred]');
     expect(sessionCtx.tools.bash.input).toEqual({
       type: 'object',
       properties: {
-        reason: {
-          type: 'string',
-          description: 'Brief explanation of why you are calling this tool',
-        },
+        command: { type: 'string', description: 'Command to run' },
       },
-      required: ['reason'],
+      required: ['command'],
     });
 
     // Second context turn without authorization: [deferred] does NOT stack

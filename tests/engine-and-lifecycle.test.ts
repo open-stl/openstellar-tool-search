@@ -474,11 +474,12 @@ describe('SessionEngine Canonical Specs & Context Seam', () => {
       },
     };
 
-    // First turn: custom_tool is unauthorized, should be deferred
+    // First turn: custom_tool is unauthorized, description is deferred; parameters stay intact (unified v1/v2 contract)
     engine.applyContextTurn(sessionCtx);
 
     expect(sessionCtx.tools.custom_tool.description).toBe('A custom tool for processing data. [deferred]');
-    expect(sessionCtx.tools.custom_tool.input.properties.reason).toBeDefined();
+    expect(sessionCtx.tools.custom_tool.input.properties.data).toBeDefined();
+    expect(sessionCtx.tools.custom_tool.input.properties.reason).toBeUndefined();
     expect(sessionCtx.system.some((s: any) => typeof s === 'string' && s.includes('[Tool Search Policy]'))).toBe(true);
 
     // Second turn without authorization: should NOT stack [deferred] [deferred]

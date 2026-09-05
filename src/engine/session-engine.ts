@@ -3,7 +3,7 @@ import { tool } from '@opencode-ai/plugin';
 import { ToolVault } from '../catalog/vault.js';
 import type { EmbedConfig } from '../types.js';
 import { SessionToolRegistry } from './session-tool-registry.js';
-import { normalizeParameters, truncateDescription, PLACEHOLDER_PARAMS } from '../catalog/schema-normalize.js';
+import { normalizeParameters, truncateDescription } from '../catalog/schema-normalize.js';
 
 export const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
 export const DEFAULT_DEFER = '[deferred]';
@@ -33,7 +33,7 @@ export interface SearchToolSpec {
  * Builds the canonical description for the semantic tool_search tool.
  */
 export function buildToolSearchDescription(deferLabel: string): string {
-  return `Find deferred tools marked "${deferLabel}" by task, capability, or semantic intent when you do not know the exact tool name. Returns matching tool IDs and descriptions (full parameter schemas are served in the tools array).
+  return `Find deferred tools marked "${deferLabel}" by task, capability, or semantic intent when you do not know the exact tool name. Returns matching tool IDs and descriptions (parameter schemas are always present in the tools array).
 Call tool_search({ query: "<task description>" }).
 WHEN TO USE: you need a capability but do not know which tool provides it (e.g. "search git commit history", "inspect AST"), or discovering relevant tools for a broad task.
 WHEN NOT TO USE:
@@ -46,7 +46,7 @@ WHEN NOT TO USE:
  * Builds the canonical description for the regex tool_search_regex tool.
  */
 export function buildToolSearchRegexDescription(_deferLabel?: string): string {
-  return `Retrieve full descriptions for known tool ID(s) or pattern matching using regex. Returns matching tool IDs and descriptions (full parameter schemas are served in the tools array).
+  return `Retrieve full descriptions for known tool ID(s) or pattern matching using regex. Returns matching tool IDs and descriptions (parameter schemas are always present in the tools array).
 Call tool_search_regex({ pattern: "<regex>" }).
 WHEN TO USE:
 - You know the exact tool ID (e.g. tool_search_regex({ pattern: "^skill$" })).
@@ -245,7 +245,7 @@ export class SessionEngine {
           '3. After retrieval, call the tool by its canonical ID. Re-searching an already-known tool returns no new metadata and wastes tokens.',
           '4. Re-retrieve only after compaction or reset (e.g. after compress), which clears search state.',
           '5. Do NOT guess parameter schemas or descriptions — a search is required before use.',
-          'Search results are the authoritative source of the canonical tool ID; the full parameter schema is served in the tools array after authorization.',
+          'Search results are the authoritative source of the canonical tool ID; parameter schemas are always present in the tools array — only descriptions are deferred.',
         ].join('\n')
       : '';
 
@@ -503,7 +503,6 @@ export class SessionEngine {
           if (!this.sessionRegistry.isAuthorized(sessionCtx.sessionID, toolName)) {
             const pristineDesc = this.vault.get(toolName)?.description ?? toolDef.description;
             toolDef.description = truncateDescription(pristineDesc, this.deferLabel);
-            toolDef.input = PLACEHOLDER_PARAMS;
           } else {
             const stored = this.vault.get(toolName);
             if (stored) {
