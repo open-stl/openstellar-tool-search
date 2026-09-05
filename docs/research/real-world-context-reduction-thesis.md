@@ -12,14 +12,14 @@
 
 Modern agentic coding environments and autonomous LLM workflows increasingly rely on the Model Context Protocol (MCP) to interact with external tools, APIs, databases, and filesystem abstractions. However, as agent configurations scale to incorporate multiple enterprise MCP servers ($10\text{–}20$ servers exposing $100\text{–}200+$ tools), static injection of complete JSON schemas into every prompt turn induces severe context bloat—termed here as the **"Tool Bloat Tax."** In standard multi-turn workflows, static schemas consume $30\text{k}\text{–}60\text{k}+$ input tokens per turn, degrading LLM reasoning through needle-in-a-haystack attention dilution while causing quadratic token accumulation ($\mathcal{O}(T^2)$) and unsustainable inference costs.
 
-This paper presents **OpenStellar Tool Search**, a deferred tool virtualization and dynamic retrieval architecture integrated into the OpenCode runtime. By transforming static tool declarations into compressed, single-sentence `[deferred]` placeholders and maintaining an isolated, out-of-band **Tool Vault**, our system reduces baseline system prompt tool payloads by **$58.9\%$ globally** (saving **$16,998$ tokens/turn**) and up to **$83.3\%$ on complex enterprise schemas** (`stitch_create_design_system` saving $+528$ tokens), eliminating up to **$1,684,800$ redundant tokens across a 100-turn agent session** ($25.5\%\text{–}58.4\%$ net context reduction across total conversation history, saving **$\$4.21+$ per session**).
+This paper presents **OpenStellar Tool Search**, a deferred tool virtualization and dynamic retrieval architecture integrated into the OpenCode runtime. By transforming static tool declarations into compressed, single-sentence `[deferred]` placeholders and maintaining an isolated, out-of-band **Tool Vault**, our system reduces baseline system prompt tool payloads by **$3.76\%$ globally** (saving **$1,085$ tokens/turn**) and up to **$9.29\%$ on documentation-heavy schemas** (`codebase_memory_query_graph` saving $+21$ tokens), eliminating **$93,500$ redundant tokens across a 100-turn agent session** (saving **$\$0.23+$ per session**). Full parameter schemas are preserved byte-identical at all times for protocol compliance.
 
 Adhering to academic Information Retrieval (IR) evaluation protocols (BEIR, TREC, and the Berkeley Function-Calling Leaderboard BFCL v1–v4), we benchmark our hybrid retrieval engine—combining Okapi BM25 with an ONNX embedding worker thread—demonstrating:
 - **$\text{NDCG}@1 = 1.0000$**, **$\text{NDCG}@3 = 0.9421$** ($95\%\text{ Bootstrap CI: } [0.9173, 0.9669]$)
 - **$\text{MRR} = 1.0000$** ($95\%\text{ Bootstrap CI: } [1.0000, 1.0000]$)
 - **$\text{MAP} = 1.0000$** ($95\%\text{ Bootstrap CI: } [1.0000, 1.0000]$)
 - **$\text{Hit Rate}@1 = 100.0\%$**, **$\text{Hit Rate}@3 = 100.0\%$**, **$\text{Hit Rate}@5 = 100.0\%$**
-- **Ultra-low search latency:** $\text{p50} = 0.138\text{ ms}$, $\text{p95} = 0.820\text{ ms}$ (mean: $0.202\text{ ms}$)
+- **Ultra-low search latency:** $\text{p50} = 0.066\text{ ms}$, $\text{p95} = 0.099\text{ ms}$ (mean: $0.202\text{ ms}$)
 
 Finally, we formalize the token economics of multi-turn compounding context growth, proving the synergistic necessity of deferred tool indexing alongside conversation compression.
 
@@ -84,7 +84,7 @@ OpenStellar Tool Search resolves the tool bloat dilemma by decoupling **tool dis
 │      └── Inverted BM25 Index + ONNX MiniLM Embedding Worker (Isolated Thread)        │
 │                                                                                      │
 │   3. Agent Turn Cycle & Dynamic Schema Authorization                                 │
-│      ├── Model sees compact [deferred] tool declarations in prompt (~-58.9% to -83.3%)│
+│      ├── Model sees compact [deferred] tool declarations in prompt (~-3.76% to -9.29%)│
 │      ├── Model invokes `tool_search({ query: "intent" })`                            │
 │      ├── ToolVault resolves top-k matches with full schemas                          │
 │      └── `tool.execute.before` asserts dynamic schema authorization                  │
@@ -136,28 +136,36 @@ To evaluate real-world performance, we constructed a heterogeneous benchmark cor
 xychart-beta
     title "Tool Context Reduction by Complexity Tier (%)"
     x-axis ["Design System (Stitch)", "API Search (Postman)", "Workstream (Pieces)", "Graph Path (Codebase)", "Browser Automation", "Global 105-Tool Average"]
-    y-axis "Token Reduction (%)" 0 --> 100
-    bar [83.3, 76.9, 76.4, 71.5, 56.9, 58.9]
+    y-axis "Token Reduction (%)" -5 --> 12
+    bar [9.29, 8.46, 7.64, 7.1, 6.85, 3.76]
 ```
 
 | Complexity Tier | Representative Tool | Baseline Tokens | Deferred Tokens | Net Saved | Reduction (%) |
 | :--- | :--- | :---: | :---: | :---: | :---: |
-| **Heavy (Design System Theme)** | `stitch_create_design_system` | $634$ | $106$ | **$+528$** | **$+83.28\%$** |
-| **Heavy (API Filter Engine)** | `postman_searchPostmanElements` | $520$ | $120$ | **$+400$** | **$+76.92\%$** |
-| **Heavy (Workstream Memory)** | `pieces_search_memory` | $462$ | $109$ | **$+353$** | **$+76.41\%$** |
-| **Heavy (Graph Path Trace)** | `codebase_memory_trace_path` | $365$ | $104$ | **$+261$** | **$+71.51\%$** |
-| **Heavy (Calendar & Events)** | `pieces_create_gcal_event` | $359$ | $107$ | **$+252$** | **$+70.19\%$** |
-| **Medium (Browser Form Fill)** | `playwright_browser_fill_form` | $229$ | $106$ | **$+123$** | **$+53.71\%$** |
-| **Medium (Code Search)** | `github_grep_searchGitHub` | $200$ | $117$ | **$+83$** | **$+41.50\%$** |
-| **Medium (Action Create)** | `agentmemory_memory_action_create` | $185$ | $119$ | **$+66$** | **$+35.68\%$** |
-| **Compact (Session Recall)** | `agentmemory_memory_recall` | $144$ | $105$ | **$+39$** | **$+27.08\%$** |
-| **Compact (Reasoning)** | `sequential_thinking_sequentialthinking` | $150$ | $111$ | **$+39$** | **$+26.00\%$** |
-| **Compact (Doc Query)** | `context7_query_docs` | $118$ | $117$ | **$+1$** | **$+0.85\%$** |
-| **Full Production Registry** | **105 MCP Tools (9 Servers)** | **28,846** | **11,848** | **+16,998** | **+58.93%** |
+| **Heavy (Graph Query)** | `codebase_memory_query_graph` | $226$ | $205$ | **$+21$** | **$+9.29\%$** |
+| **Heavy (API Search)** | `postman_searchPostmanElements` | $520$ | $476$ | **$+44$** | **$+8.46\%$** |
+| **Medium (Session Recall)** | `agentmemory_memory_recall` | $144$ | $133$ | **$+11$** | **$+7.64\%$** |
+| **Heavy (Design System)** | `stitch_create_design_system` | $634$ | $589$ | **$+45$** | **$+7.10\%$** |
+| **Heavy (Graph Path Trace)** | `codebase_memory_trace_path` | $365$ | $340$ | **$+25$** | **$+6.85\%$** |
+| **Heavy (Calendar & Events)** | `pieces_create_gcal_event` | $359$ | $338$ | **$+21$** | **$+5.85\%$** |
+| **Heavy (Workstream Memory)** | `pieces_search_memory` | $462$ | $435$ | **$+27$** | **$+5.84\%$** |
+| **Medium (Design Variants)** | `stitch_generate_variants` | $312$ | $296$ | **$+16$** | **$+5.13\%$** |
+| **Medium (API Workspaces)** | `postman_getWorkspaces` | $226$ | $215$ | **$+11$** | **$+4.87\%$** |
+| **Compact (Browser Cookies)** | `playwright_browser_cookie_set` | $224$ | $227$ | **$-3$** | **$-1.34\%$** |
+| **Compact (Browser Forms)** | `playwright_browser_fill_form` | $229$ | $233$ | **$-4$** | **$-1.75\%$** |
+| **Compact (Advanced Search)** | `exa_web_search_advanced_exa` | $220$ | $224$ | **$-4$** | **$-1.82\%$** |
+| **Compact (Code Search)** | `github_grep_searchGitHub` | $200$ | $204$ | **$-4$** | **$-2.00\%$** |
+| **Compact (Architecture)** | `codebase_memory_get_architecture` | $198$ | $202$ | **$-4$** | **$-2.02\%$** |
+| **Compact (Action Create)** | `agentmemory_memory_action_create` | $185$ | $189$ | **$-4$** | **$-2.16\%$** |
+| **Compact (Sentinel Create)** | `agentmemory_memory_sentinel_create` | $173$ | $177$ | **$-4$** | **$-2.31\%$** |
+| **Compact (Reasoning)** | `sequential_thinking_sequentialthinking` | $150$ | $154$ | **$-4$** | **$-2.67\%$** |
+| **Compact (Doc Query)** | `context7_query_docs` | $118$ | $122$ | **$-4$** | **$-3.39\%$** |
+| **Full Production Registry** | **105 MCP Tools (9 Servers)** | **28,846** | **27,761** | **+1,085** | **+3.76%** |
 
 #### Key Empirical Observations:
-1. **Schema Asymmetry:** High-value enterprise tools (design systems, API filtering engines, workstream memories) exhibit massive token compression (**up to $+83.3\%$**), removing hundreds of tokens of unstructured documentation prose and redundant nested properties.
-2. **Global Prompt Footprint:** Across the full 105-tool registry, the aggregate single-turn reduction yields a net savings of **$16,998$ tokens per turn** (**$+58.93\%$ prompt reduction**).
+1. **Description Deferral Impact:** Documentation-heavy enterprise tools with multi-sentence guides (`codebase_memory_query_graph`, `postman_searchPostmanElements`, `stitch_create_design_system`) show positive prompt reduction (**up to $+9.29\%$**), pruning verbose explanations down to clean single-sentence summaries while preserving complete parameter schemas.
+2. **Honest Accounting on Single-Sentence Tools:** Tools whose upstream definitions are already a single sentence (`context7_query_docs`, `github_grep_searchGitHub`, `agentmemory_memory_action_create`) yield a slight negative delta ($-1.3\%\text{–}-3.4\%$) because appending the `[deferred]` tag adds $2\text{–}4$ tokens.
+3. **Global Prompt Footprint:** Across the full 105-tool registry, aggregate single-turn reduction saves **$1,085$ tokens per turn** (**$+3.76\%$ net prompt reduction**), guaranteeing 100% parameter schema fidelity for protocol compliance.
 
 ---
 
@@ -188,9 +196,9 @@ $$\text{MRR} = \frac{1}{|\mathcal{Q}|} \sum_{q=1}^{|\mathcal{Q}|} \frac{1}{\text
 │                                                                                        │
 │  Search Latency Profile:                                                               │
 │    • Mean: 0.202 ms (202 microseconds)                                                 │
-│    • p50:  0.138 ms                                                                    │
-│    • p95:  0.820 ms                                                                    │
-│    • p99:  0.820 ms                                                                    │
+│    • p50:  0.066 ms                                                                    │
+│    • p95:  0.099 ms                                                                    │
+│    • p99:  0.099 ms                                                                    │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -199,10 +207,10 @@ xychart-beta
     title "Search Latency vs. LLM Turn Generation Time (ms)"
     x-axis ["Tool Search (p50)", "Tool Search (p99)", "IPC / MCP Wire", "Local LLM TTFT", "Cloud LLM TTFT"]
     y-axis "Response Time (ms)" 0 --> 1200
-    bar [0.138, 0.820, 2.5, 350, 1200]
+    bar [0.066, 0.099, 2.5, 350, 1200]
 ```
 
-The combination of exact identifier matching and BM25 token relevance achieved a **100% Top-3 hit rate**, ensuring the agent reliably discovers the target tool on its first retrieval query without false negatives or degraded task completion. At **0.138 ms** ($\approx 138\ \mu\text{s}$), search latency accounts for $<0.012\%$ of end-to-end model inference, adding zero perceptible latency.
+The combination of exact identifier matching and BM25 token relevance achieved a **100% Top-3 hit rate**, ensuring the agent reliably discovers the target tool on its first retrieval query without false negatives or degraded task completion. At **0.066 ms** ($\approx 138\ \mu\text{s}$), search latency accounts for $<0.012\%$ of end-to-end model inference, adding zero perceptible latency.
 
 ---
 
@@ -214,8 +222,8 @@ In long-running autonomous sessions ($T = 1\text{ to }100\text{ turns}$), input 
 xychart-beta
     title "Multi-Turn Compounding Cumulative Token Savings (k Tokens)"
     x-axis ["T=1", "T=5", "T=10", "T=20", "T=30", "T=50", "T=100"]
-    y-axis "Cumulative Tokens Saved (k Tokens)" 0 --> 1800
-    line [16.8, 84.2, 168.5, 337.0, 505.4, 842.4, 1684.8]
+    y-axis "Cumulative Tokens Saved (k Tokens)" 0 --> 100
+    line [0.9, 4.7, 9.4, 18.7, 28.1, 46.8, 93.5]
 ```
 
 | Turn ($T$) | Cumulative Baseline Tokens | Cumulative Deferred Tokens | Cumulative Saved Tokens | Baseline Cost (USD) | Deferred Cost (USD) | Net Savings (USD) | Relative Reduction (%) |
@@ -228,7 +236,7 @@ xychart-beta
 | **40** | $1,738,840$ | $1,064,920$ | **$673,920$** | $\$4.3471$ | $\$2.6623$ | **$\$1.6848$** | **$38.76\%$** |
 | **50** | $2,361,050$ | $1,518,650$ | **$842,400$** | $\$5.9026$ | $\$3.7966$ | **$\$2.1060$** | **$35.68\%$** |
 | **75** | $4,244,700$ | $2,981,100$ | **$1,263,600$** | $\$10.6118$ | $\$7.4527$ | **$\$3.1590$** | **$29.77\%$** |
-| **100** | $6,597,100$ | $4,912,300$ | **$1,684,800$** | $\$16.4928$ | $\$12.2808$ | **$\$4.2120$** | **$25.54\%$** |
+| **100** | $6,597,100$ | $4,912,300$ | **$93,500$** | $\$16.4928$ | $\$12.2808$ | **$\$0.2338$** | **$25.54\%$** |
 
 ```
 Cumulative Tokens Processed vs Turn Depth (T = 1..100)
@@ -243,7 +251,7 @@ Cumulative Tokens Processed vs Turn Depth (T = 1..100)
          │           ┌─────┘ ┌─────┘
     0  ──┴───────────┴───────┴───────┴───────┴───────┴───────┴───
          T=1        T=20    T=40    T=60    T=80    T=100
-         [ Net Cumulative Savings at T=100: 1,684,800 Tokens ($4.2120 USD/Session) ]
+         [ Net Cumulative Savings at T=100: 93,500 Tokens ($0.2338 USD/Session) ]
 ```
 
 ---
@@ -280,7 +288,7 @@ This mathematical reality highlights a fundamental architectural principle:
 | **Gorilla / APIBench** (*Patil et al., 2023*) | Model Fine-tuning | Static Context | N/A | AST Sub-tree Match |
 | **BFCL v1–v4** (*Patil et al., 2025*) | Function-Calling Leaderboard | Static Parameter Injection | N/A | AST Match, Error Rate |
 | **AnyTool** (*Du et al., 2024*) | Open-World API Retrieval | Hierarchical Vector Index | $\approx 250\text{ ms}$ | Top-$k$ Recall |
-| **OpenStellar Tool Search** (*Ours*) | **Zero-overhead Runtime Optimization** | **First-Sentence Deferral + Vault** | **$0.138\text{ ms}$** | **nDCG@3, MRR, MAP, Token ROI** |
+| **OpenStellar Tool Search** (*Ours*) | **Zero-overhead Runtime Optimization** | **First-Sentence Deferral + Vault** | **$0.066\text{ ms}$** | **nDCG@3, MRR, MAP, Token ROI** |
 
 ---
 
@@ -312,10 +320,10 @@ cat docs/research/benchmark-thesis-results.json
 ## 7. Conclusion
 
 OpenStellar Tool Search provides an enterprise-ready solution to the Model Context Protocol tool bloat problem. By pairing **first-sentence semantic description truncation** with **on-demand BM25 and ONNX vector retrieval**, the system achieves:
-1. **$58.9\%$ global reduction** in baseline tool payload tokens (and up to **$83.3\%$** on heavy enterprise schemas) across heterogeneous MCP catalogs.
-2. **$\text{NDCG}@3 = 0.9421$**, **$\text{MRR} = 1.0000$**, and **$100.0\%$ Top-3 retrieval accuracy** with sub-millisecond computational latency ($0.138\text{ ms}$).
-3. **Compounding cumulative token savings** eliminating over $1.68\text{M}$ tokens ($+\$4.21\text{ USD}$) per 100-turn agent session.
-4. **Complete backwards compatibility** with OpenCode v2 configuration conventions and zero disruption to model execution flows.
+1. **$3.76\%$ global reduction** in baseline tool payload tokens (up to **$9.29\%$** on documentation-heavy enterprise schemas) across heterogeneous MCP catalogs — achieved by deferring descriptions only, with **$100\%$ parameter schema fidelity** preserved at all times.
+2. **$\text{NDCG}@3 = 0.9421$**, **$\text{MRR} = 1.0000$**, and **$100.0\%$ Top-3 retrieval accuracy** with sub-millisecond computational latency ($0.066\text{ ms}$).
+3. **Compounding cumulative token savings** eliminating $93{,}500$ tokens ($+\$0.23\text{ USD}$) per 100-turn agent session.
+4. **Complete backwards compatibility** with OpenCode v1.x and v2.0 configuration conventions and zero disruption to model execution flows.
 
 ---
 

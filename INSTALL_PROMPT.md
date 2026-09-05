@@ -57,6 +57,6 @@ Please install and configure the @openstellar/tool-search plugin for OpenCode:
 
 ### Manual Verification
 After running the prompt and restarting OpenCode (or `opencode2`):
-1. All static and MCP tools will display the `[deferred]` tag in system prompts, saving ~35% context tokens per turn.
+1. All static and MCP tools will display the `[deferred]` tag in system prompts — descriptions are deferred to a first sentence, parameter schemas stay fully intact — trimming verbose documentation prose per turn.
 2. When the model needs a tool, it will dynamically discover and authorize it via `tool_search` or `tool_search_regex`.
 

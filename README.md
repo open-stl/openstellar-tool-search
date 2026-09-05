@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <strong>Cut MCP prompt context by ~35% on every turn. Eliminate tool hallucination. Keep 100% tool discoverability.</strong>
+  <strong>Defer tool descriptions. Search on demand. Keep 100% tool discoverability.</strong>
 </p>
 
 ---
@@ -53,7 +53,7 @@ In a standard environment with ~100 MCP tools:
 
 **OpenStellar Tool Search** virtualizes tool delivery inside OpenCode (supporting both OpenCode 1.x and OpenCode 2.0 / `opencode2` seamlessly):
 
-- **Zero Prompt Bloat at Startup**: Tool descriptions in the system prompt are truncated to their first sentence and marked `[deferred]`. Full parameter schemas are preserved for protocol compliance while slashing prompt weight by ~35%.
+- **Zero Prompt Bloat at Startup**: Tool descriptions in the system prompt are truncated to their first sentence and marked `[deferred]`. Full parameter schemas are always preserved — parameters are never hidden or substituted, on both OpenCode 1.x and 2.0.
 - **Local Hybrid Search Engine**: Tools are indexed locally using BM25 Okapi and local ONNX vector embeddings (`@xenova/transformers`) running in a background Node.js worker thread.
 - **On-Demand Tool Delivery**: When an agent needs a tool, it calls `tool_search` (by natural language task) or `tool_search_regex` (by exact name or wildcard). Full tool descriptions and parameters are delivered dynamically.
 - **OpenCode v2 Parallel MCP Prewarming**: Enabled MCP servers start concurrently before returning hooks, guaranteeing all tools are safely captured in OpenCode's initial startup snapshot without unbounded hangs (fail-open timeouts).
@@ -213,9 +213,11 @@ tool_search_regex({ pattern: "^(read|write|edit|glob|grep|bash)$" })
 
 | ⚡ Global Prompt Reduction | 🚀 Peak Single-Tool Savings | 🎯 Top-3 Discovery Rate | 💰 100-Turn Session Savings |
 | :---: | :---: | :---: | :---: |
-| **−58.9%** <br><sub>−16,998 tokens saved / turn</sub> | **−83.3%** <br><sub>+528 tokens / enterprise tool</sub> | **100.0%** <br><sub>nDCG@3 = 0.9421 • MRR = 1.00</sub> | **1,684,800 tokens** <br><sub>$4.21+ saved per session</sub> |
+| **−3.76%** <br><sub>−1,085 tokens saved / turn</sub> | **−9.29%** <br><sub>+21 tokens / graph tool</sub> | **100.0%** <br><sub>nDCG@3 = 0.9421 • MRR = 1.00</sub> | **93,500 tokens** <br><sub>$0.23+ saved per session</sub> |
 
 </div>
+
+> 💡 **What the deferral removes**: only verbose description *prose* (everything after the first sentence). Parameter schemas — the bulk of every tool definition — stay fully present in the tools array at all times. This is deliberate: parameters are what the model needs to construct correct calls, and keeping them intact guarantees zero behavioral drift between the deferred and authorized states.
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -226,19 +228,21 @@ tool_search_regex({ pattern: "^(read|write|edit|glob|grep|bash)$" })
 │  [████████████████████████████████████████████████████████████] 28,846 tokens / turn (100%)      │
 │                                                                                                  │
 │  WITH TOOL SEARCH VIRTUALIZATION:                                                                │
-│  [█████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 11,848 tokens / turn (41.1%)      │
-│  └── NET SAVED PER TURN: -16,998 tokens (-58.9% global prompt reduction)                         │
+│  [███████████████████████████████████████████████████████████░] 27,761 tokens / turn (96.2%)     │
+│  └── NET SAVED PER TURN: -1,085 tokens (-3.76% global prompt reduction)                          │
 │                                                                                                  │
-│  SCHEMA DETAIL (e.g. stitch_create_design_system):                                               │
-│  Baseline : [████████████████████████████████████████] 634 tokens                                │
-│  Deferred : [███████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 106 tokens  (-83.3% | +528 tokens saved) │
+│  DESCRIPTION DETAIL (e.g. codebase_memory_query_graph):                                          │
+│  Baseline : [██████████████████████████████████░░░░░░░] 226 tokens (desc 96 + params 130)        │
+│  Deferred : [████████████████████████████████████░░░░░] 205 tokens  (-9.3% | +21 tokens saved)   │
+│  └── parameters kept 100% intact; only prose after the first sentence is deferred                │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-> 🌟 **Two Operating Modes Supported**:
-> - **Mode 1: Standard Virtualization** (*Default*): Prunes verbose documentation prose down to single-sentence summaries and parameter placeholders. Delivers **−58.9% context reduction** (**−16,998 tokens/turn**, reducing prompt payload from 28,846 down to 11,848 tokens) while keeping every tool discoverable in the base prompt.
-> - **Mode 2: Pure Dynamic Discovery**: Prunes deferred tool declarations entirely from the prompt context until queried via `tool_search` / `tool_search_regex`. Delivers **> −98.6% context reduction** (**−28,456 tokens/turn**, shrinking initial tool footprint down to ~390 tokens).
+> 🌟 **Design Philosophy — Description Deferral, Not Schema Hiding**:
+> - **Descriptions are deferred**: collapsed to a first-sentence `[deferred]` stub. The model discovers the full description on demand via `tool_search` / `tool_search_regex`.
+> - **Parameter schemas are never deferred**: they remain byte-identical in every turn. Tool-calling accuracy is driven by the tools array — keeping it intact means calls are correct from the very first invocation after authorization.
+> - **Net effect**: savings scale with how verbose each tool's documentation prose is (−9.3% on documentation-heavy tools, ~−2% on single-sentence tools where the `[deferred]` marker itself adds a few tokens). The value is a cleaner, more attention-efficient prompt — not schema stripping.
 
 ### 1. Token Reduction Across Schema Complexity Tiers
 
@@ -246,26 +250,27 @@ Measured with the `Xenova/gpt-4o` BPE tokenizer (`o200k_base`) across real produ
 
 ```mermaid
 xychart-beta
-    title "Tool Context Reduction by Complexity Tier (%)"
-    x-axis ["Design System (Stitch)", "API Search (Postman)", "Workstream (Pieces)", "Graph Path (Codebase)", "Browser Automation", "Global 105-Tool Average"]
-    y-axis "Token Reduction (%)" 0 --> 100
-    bar [83.3, 76.9, 76.4, 71.5, 56.9, 58.9]
+    title "Description Deferral Reduction by Complexity Tier (%)"
+    x-axis ["Graph Query (Codebase)", "API Search (Postman)", "Design System (Stitch)", "Session Recall (AgentMemory)", "Docs Query (Context7)", "Global 105-Tool Average"]
+    y-axis "Token Reduction (%)" -5 --> 10
+    bar [9.29, 8.46, 7.1, 7.64, -3.39, 3.76]
 ```
 
 | Complexity Tier | Representative Tool | Category | Baseline Payload | With Tool Search | Net Tokens Saved | Context Reduction |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Heavy (Design System Theme)** | `stitch_create_design_system` | UI / Tokens | 634 tokens | 106 tokens | **+528 tokens** | **83.28%** |
-| **Heavy (API Filter Engine)** | `postman_searchPostmanElements` | REST / API | 520 tokens | 120 tokens | **+400 tokens** | **76.92%** |
-| **Heavy (Workstream Memory)** | `pieces_search_memory` | LTM / Context | 462 tokens | 109 tokens | **+353 tokens** | **76.41%** |
-| **Heavy (Graph Path Trace)** | `codebase_memory_trace_path` | Code Graph | 365 tokens | 104 tokens | **+261 tokens** | **71.51%** |
-| **Heavy (Calendar & Events)** | `pieces_create_gcal_event` | Productivity | 359 tokens | 107 tokens | **+252 tokens** | **70.19%** |
-| **Medium (Browser Form Fill)** | `playwright_browser_fill_form` | Browser | 229 tokens | 106 tokens | **+123 tokens** | **53.71%** |
-| **Medium (Code Search)** | `github_grep_searchGitHub` | Code Search | 200 tokens | 117 tokens | **+83 tokens** | **41.50%** |
-| **Medium (Action Create)** | `agentmemory_memory_action_create` | Memory / Actions | 185 tokens | 119 tokens | **+66 tokens** | **35.68%** |
-| **Compact (Session Recall)** | `agentmemory_memory_recall` | Memory / LTM | 144 tokens | 105 tokens | **+39 tokens** | **27.08%** |
-| **Compact (Reasoning)** | `sequential_thinking_sequentialthinking` | Reasoning | 150 tokens | 111 tokens | **+39 tokens** | **26.00%** |
-| **Compact (Doc Query)** | `context7_query_docs` | Documentation | 118 tokens | 117 tokens | **+1 token** | **0.85%** |
-| **Full Production Catalog** | **105 MCP Tools (9 Servers)** | **Full Registry** | **28,846 tokens** | **11,848 tokens** | **+16,998 tokens** | **58.93% (net/turn)** |
+| **Heavy (Graph Query)** | `codebase_memory_query_graph` | Code Graph | 226 tokens | 205 tokens | **+21 tokens** | **9.29%** |
+| **Heavy (API Search)** | `postman_searchPostmanElements` | REST / API | 520 tokens | 476 tokens | **+44 tokens** | **8.46%** |
+| **Medium (Session Recall)** | `agentmemory_memory_recall` | Memory / LTM | 144 tokens | 133 tokens | **+11 tokens** | **7.64%** |
+| **Heavy (Design System)** | `stitch_create_design_system` | UI / Tokens | 634 tokens | 589 tokens | **+45 tokens** | **7.10%** |
+| **Heavy (Graph Trace)** | `codebase_memory_trace_path` | Code Graph | 365 tokens | 340 tokens | **+25 tokens** | **6.85%** |
+| **Heavy (Calendar)** | `pieces_create_gcal_event` | Productivity | 359 tokens | 338 tokens | **+21 tokens** | **5.85%** |
+| **Medium (Search)** | `github_grep_searchGitHub` | Code Search | 200 tokens | 204 tokens | **−4 tokens** | **−2.00%** |
+| **Compact (Action Create)** | `agentmemory_memory_action_create` | Memory / Actions | 185 tokens | 189 tokens | **−4 tokens** | **−2.16%** |
+| **Compact (Reasoning)** | `sequential_thinking_sequentialthinking` | Reasoning | 150 tokens | 154 tokens | **−4 tokens** | **−2.67%** |
+| **Compact (Doc Query)** | `context7_query_docs` | Documentation | 118 tokens | 122 tokens | **−4 tokens** | **−3.39%** |
+| **Full Production Catalog** | **105 MCP Tools (9 Servers)** | **Full Registry** | **28,846 tokens** | **27,761 tokens** | **+1,085 tokens** | **3.76% (net/turn)** |
+
+> ℹ️ **Honest accounting**: tools whose descriptions are already a single sentence end slightly *heavier* (the `[deferred]` marker adds ~2–4 tokens). This is disclosed deliberately — the benchmark measures the real runtime contract, not an idealized one.
 
 ### 2. Information Retrieval & Evaluation Metrics (TREC / BEIR / BFCL Protocol)
 
@@ -281,41 +286,40 @@ Evaluated across representative developer natural-language queries adhering to s
 | **Hit Rate@1** (Top-1 Accuracy) | **100.0%** | — | Single-Shot Exact Discovery |
 | **Hit Rate@3** (Top-3 Accuracy) | **100.0%** | — | Guaranteed Discovery within Top-3 |
 | **Hit Rate@5** (Top-5 Accuracy) | **100.0%** | — | Full Discovery Coverage |
-| **Search Latency (p50 / p95 / p99)** | **0.138 ms / 0.820 ms / 0.820 ms** | — | In-Memory BM25 + ONNX Embedding Worker |
+| **Search Latency (p50 / p95 / p99)** | **0.066 ms / 0.099 ms / 0.099 ms** | — | In-Memory BM25 + ONNX Embedding Worker |
 
 ```mermaid
 xychart-beta
     title "Search Latency vs. LLM Turn Generation Time (ms)"
     x-axis ["Tool Search (p50)", "Tool Search (p99)", "IPC / MCP Wire", "Local LLM TTFT", "Cloud LLM TTFT"]
     y-axis "Response Time (ms)" 0 --> 1200
-    bar [0.138, 0.820, 2.5, 350, 1200]
+    bar [0.066, 0.099, 2.5, 350, 1200]
 ```
 
-> ⚡ **Zero Perceptible Overhead**: At **0.138 ms** ($\approx 138\ \mu\text{s}$), tool search latency represents $<0.012\%$ of typical cloud LLM Time-to-First-Token (TTFT), running over **7,000× faster** than model inference.
+> ⚡ **Zero Perceptible Overhead**: At **0.066 ms**, tool search latency represents $<0.006\%$ of typical cloud LLM Time-to-First-Token (TTFT), running over **18,000× faster** than model inference.
 
 ### 3. Multi-Turn Compounding Scale & Cost Savings
 
-Because system prompt tool definitions are re-transmitted on **every single conversational turn**, savings compound quadratically ($\mathcal{O}(T^2)$) throughout an agent session ($T = 1\text{–}100\text{ turns}$, standard rate: $\$2.50\text{ / 1M input tokens}$):
+Because system prompt tool definitions are re-transmitted on **every single conversational turn**, savings compound linearly ($\mathcal{O}(T)$) throughout an agent session ($T = 1\text{–}100\text{ turns}$, standard rate: $\$2.50\text{ / 1M input tokens}$):
 
 ```mermaid
 xychart-beta
     title "Multi-Turn Compounding Cumulative Token Savings (k Tokens)"
     x-axis ["T=1", "T=5", "T=10", "T=20", "T=30", "T=50", "T=100"]
-    y-axis "Cumulative Tokens Saved (k Tokens)" 0 --> 1800
-    line [16.8, 84.2, 168.5, 337.0, 505.4, 842.4, 1684.8]
+    y-axis "Cumulative Tokens Saved (k Tokens)" 0 --> 100
+    line [0.9, 4.7, 9.4, 18.7, 28.1, 46.8, 93.5]
 ```
 
 | Session Horizon ($T$) | Cumulative Baseline Tokens | With Tool Search | Net Tokens Saved | Baseline Cost (USD) | With Tool Search (USD) | Net Session Savings |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **1 turn** | 28,846 | 11,998 | **16,848 tokens** | $0.0721 | $0.0300 | **$0.0421** (58.41%) |
-| **5 turns** | 151,730 | 67,490 | **84,240 tokens** | $0.3793 | $0.1687 | **$0.2106** (55.52%) |
-| **10 turns** | 322,210 | 153,730 | **168,480 tokens** | $0.8055 | $0.3843 | **$0.4212** (52.29%) |
-| **20 turns** | 719,420 | 382,460 | **336,960 tokens** | $1.7985 | $0.9562 | **$0.8424** (46.84%) |
-| **30 turns** | 1,191,630 | 686,190 | **505,440 tokens** | $2.9791 | $1.7155 | **$1.2636** (42.42%) |
-| **40 turns** | 1,738,840 | 1,064,920 | **673,920 tokens** | $4.3471 | $2.6623 | **$1.6848** (38.76%) |
-| **50 turns** | 2,361,050 | 1,518,650 | **842,400 tokens** | $5.9026 | $3.7966 | **$2.1060** (35.68%) |
-| **75 turns** | 4,244,700 | 2,981,100 | **1,263,600 tokens** | $10.6118 | $7.4527 | **$3.1590** (29.77%) |
-| **100 turns** | 6,597,100 | 4,912,300 | **1,684,800 tokens** | $16.4928 | $12.2808 | **$4.2120 / session** (25.54%) |
+| **1 turn** | 28,846 | 27,911 | **935 tokens** | $0.0721 | $0.0698 | **$0.0023** (3.24%) |
+| **5 turns** | 151,730 | 147,055 | **4,675 tokens** | $0.3793 | $0.3676 | **$0.0117** (3.08%) |
+| **10 turns** | 322,210 | 312,860 | **9,350 tokens** | $0.8055 | $0.7822 | **$0.0234** (2.90%) |
+| **20 turns** | 719,420 | 700,720 | **18,700 tokens** | $1.7985 | $1.7518 | **$0.0467** (2.60%) |
+| **30 turns** | 1,191,630 | 1,163,580 | **28,050 tokens** | $2.9791 | $2.9090 | **$0.0701** (2.35%) |
+| **50 turns** | 2,361,050 | 2,314,300 | **46,750 tokens** | $5.9026 | $5.7858 | **$0.1169** (1.98%) |
+| **75 turns** | 4,244,700 | 4,174,575 | **70,125 tokens** | $10.6118 | $10.4365 | **$0.1753** (1.65%) |
+| **100 turns** | 6,597,100 | 6,503,600 | **93,500 tokens** | $16.4928 | $16.2590 | **$0.2338 / session** (1.42%) |
 
 ---
 
@@ -433,7 +437,7 @@ OpenCode Startup
 # Install dependencies
 npm install
 
-# Run Vitest test suite (106 tests across 5 suites)
+# Run Vitest test suite (124 tests across 6 suites)
 npm test
 
 # Typecheck

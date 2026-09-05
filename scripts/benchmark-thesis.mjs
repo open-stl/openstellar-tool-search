@@ -606,7 +606,7 @@ async function runProfessionalBenchmark() {
       function: {
         name: tool.name,
         description: truncateDescription(tool.description, '[deferred]'),
-        parameters: PLACEHOLDER_PARAMS
+        parameters: tool.parameters
       }
     };
 
