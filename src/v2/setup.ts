@@ -76,7 +76,13 @@ export async function setupV2(ctx: any, options?: Record<string, unknown>): Prom
       if (!input || !output) return;
       const notice = runtime.handleToolExecuted(input.tool, input.sessionID);
       if (notice) {
-        output.output = `${String(output.output ?? '')}${notice}`;
+        if (typeof output.content === 'string') {
+          output.content += notice;
+        } else if (output.output !== undefined) {
+          output.output = `${String(output.output ?? '')}${notice}`;
+        } else {
+          output.output = notice;
+        }
       }
     } catch {
       // silently ignore

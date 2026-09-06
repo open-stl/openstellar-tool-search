@@ -530,4 +530,57 @@ describe('OpenCode 2.0 setupV2', () => {
     // Calling transform again does not throw and preserves single onUpdate subscription
     transformCallbacks[0]({ add: addFn });
   });
+
+  it('resets tool authorizations when session.compacted event is fired', async () => {
+    const { ctx, transformCallbacks, toolHooks, sessionHooks, eventSubscribers } = createMockV2Context();
+
+    await setupV2(ctx, {
+      alwaysLoad: ['test_init'],
+    });
+
+    const addedTools: Record<string, any> = {};
+    transformCallbacks[0]({
+      add: (t: any) => {
+        addedTools[t.name] = t;
+      },
+    });
+
+    const sessionID = 'ses-compact-test';
+    const sessionCtx = {
+      sessionID,
+      system: [] as string[],
+      messages: [],
+      tools: {
+        git_status: {
+          description: 'Show git working tree status.',
+          input: { type: 'object', properties: {} },
+        },
+      },
+    };
+
+    // Register tool via session context hook
+    await sessionHooks['context'][0](sessionCtx);
+
+    // 1. Authorize git_status via regex
+    await addedTools.tool_search_regex.execute(
+      { pattern: '^git_status$' },
+      { sessionID },
+    );
+
+    // 2. Verified authorized before compaction
+    await expect(
+      toolHooks['execute.before'][0]({ tool: 'git_status', sessionID }),
+    ).resolves.toBeUndefined();
+
+    // 3. Fire session.compacted event
+    await eventSubscribers[0]({
+      type: 'session.compacted',
+      properties: { sessionID },
+    });
+
+    // 4. Assert tool authorization has been reset — calls now throw [Tool Search Required]
+    await expect(
+      toolHooks['execute.before'][0]({ tool: 'git_status', sessionID }),
+    ).rejects.toThrow(/\[Tool Search Required\]/);
+  });
 });

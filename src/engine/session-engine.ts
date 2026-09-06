@@ -540,6 +540,11 @@ export class SessionEngine {
       if (typeof sessionID === 'string' && sessionID.length > 0) {
         this.deleteSession(sessionID);
       }
+    } else if (evt.type === 'session.compacted' || evt.type === 'session.compaction') {
+      const sessionID = (evt.properties as { sessionID?: unknown } | undefined)?.sessionID ?? (evt as { sessionID?: unknown })?.sessionID;
+      if (typeof sessionID === 'string' && sessionID.length > 0) {
+        this.compactSession(sessionID);
+      }
     }
   }
 

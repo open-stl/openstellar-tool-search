@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "generatedAt": "2026-09-05T15:25:09.542Z",
+    "generatedAt": "2026-09-06T09:59:57.785Z",
     "benchmarkVersion": "1.0.0",
     "tokenizer": "Xenova/gpt-4o (o200k_base)",
     "corpusScale": "105 tools across 9 production MCP servers",
@@ -36,8 +36,8 @@
       "hitRate5": 100
     },
     "latencyMs": {
-      "mean": 0.068,
-      "p50": 0.066,
+      "mean": 0.05,
+      "p50": 0.043,
       "p95": 0.099,
       "p99": 0.099
     },
