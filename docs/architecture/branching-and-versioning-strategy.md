@@ -71,26 +71,32 @@ main ────────────────────\────�
 
 ### Step 4: Official Release & Teardown
 - Once the release candidate satisfies all validation checks:
-  1. Bump version in `package.json` to `2.0.0`.
-  2. Merge `release/v2.0.0` into `main`:
+  1. **Pre-flight check**: Confirm the version/tag does not already exist remotely — another publisher may have beaten you:
+     ```bash
+     npm view @openstellar/tool-search versions   # 409 if published
+     gh release view v2.0.0                        # 422 if release exists
+     ```
+     If the tag exists with an empty auto-created release, fill it via `gh release edit v2.0.0 --notes-file notes.md` instead of recreating it.
+  2. Bump version in `package.json` to `2.0.0`.
+  3. Merge `release/v2.0.0` into `main`:
      ```bash
      git checkout main
      git pull origin main
      git merge --no-ff release/v2.0.0
      ```
-  3. Create the official release Git tag on `main`:
+  4. Create the official release Git tag on `main`:
      ```bash
      git tag -a v2.0.0 -m "Release v2.0.0"
      git push origin main
-git push origin refs/tags/v2.0.0
+     git push origin refs/tags/v2.0.0
      ```
-  4. Back-merge `release/v2.0.0` (or `main`) into `develop` to ensure any stabilization hotfixes are retained:
+  5. Back-merge `release/v2.0.0` (or `main`) into `develop` to ensure any stabilization hotfixes are retained:
      ```bash
      git checkout develop
      git merge --no-ff release/v2.0.0
      git push origin develop
      ```
-  5. Delete the temporary release branch:
+  6. Delete the temporary release branch:
      ```bash
      git branch -d release/v2.0.0
      git push origin --delete release/v2.0.0

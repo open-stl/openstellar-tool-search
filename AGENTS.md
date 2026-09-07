@@ -31,7 +31,14 @@ Single-context repository layout (`CONTEXT.md` + `docs/adr/`). See `docs/agents/
 
 ## Branching & Release Policy
 
-All agents and contributors must adhere to the project branching and release strategy documented in `docs/architecture/branching-and-versioning-strategy.md`:
-- **Branch Naming**: Branches denote workflow state (`develop`, `main`, `release/vX.Y.Z`, `feature/*`, `fix/*`). **NEVER create branches named with bare version numbers (e.g. `v1.0.0`)** to prevent Git ref collisions with Git tags.
-- **Daily Work**: Branch off and merge into `develop`.
-- **Releases & Milestones**: Release candidates use `release/vX.Y.Z` branches. Immutable releases are marked with Git tags (`vX.Y.Z`). Production-ready code lives on `main`.
+Follow `docs/architecture/branching-and-versioning-strategy.md`. Key rules:
+- Branches denote workflow state (`develop`, `main`, `release/vX.Y.Z`, `feature/*`, `fix/*`) — never bare version numbers (`vX.Y.Z` collides with tags).
+- Daily work branches off and merges into `develop`.
+- Release candidates use `release/vX.Y.Z`; immutable milestones are Git tags; production code lives on `main`.
+
+## Push & Release Hygiene
+
+Two recurring failure modes — check before writing to remotes:
+
+1. **Wrong authenticated account**: pushes and `gh` write operations must run under the account with write access to this repository. If a push fails with 403 `Permission denied to <account>`, switch to the account that owns the repo and retry.
+2. **Version already published**: Before `npm publish` or `gh release create <tag>`, check whether the version/tag already exists remotely (`npm view <package> versions`, `gh release view <tag>`). On npm 409 or GitHub 422, another publisher won — verify the existing tarball contents (`npm pack <pkg>@<version>` + inspect) and fill an empty auto-created release via `gh release edit <tag> --notes-file ...`.
