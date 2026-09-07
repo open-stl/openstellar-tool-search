@@ -5,6 +5,7 @@ import { McpToolProvider, isServerEnabled } from '../mcp/mcp-tool-provider.js';
 import type { McpServerConfig } from '../mcp/types.js';
 import type { ToolDefinition } from '../catalog/tool-provider.js';
 import { bootstrapLog } from '../core/bootstrap.js';
+import type { McpToastNotifier } from './mcp-toast-notifier.js';
 
 /**
  * Description for a warming server's placeholder tool. Echoes the
@@ -82,6 +83,7 @@ export class McpWiring {
     private readonly sessionRegistry: SessionToolRegistry,
     private readonly tools: Record<string, ReturnType<typeof tool>>,
     private readonly timeout: number,
+    private readonly toastNotifier?: McpToastNotifier,
   ) {}
 
   public get isInitialized(): boolean {
@@ -97,7 +99,7 @@ export class McpWiring {
     // timeout is the PER-SERVER CEILING: each server must settle within it
     // or is cut (fail-open + console.warn). Wait-all means the factory returns
     // only after every server settled or was cut.
-    const mcpProvider = new McpToolProvider(mcpConfig, undefined, undefined, this.timeout);
+    const mcpProvider = new McpToolProvider(mcpConfig, undefined, undefined, this.timeout, this.toastNotifier);
     // Registration is synchronous (the provider has no tools until warm-up
     // completes), so startup never awaits the MCP handshake.
     void this.vault.registerProvider(mcpProvider);

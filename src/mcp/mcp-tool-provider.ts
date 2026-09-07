@@ -8,6 +8,7 @@ import { RemoteTransportConnector } from './transports/remote-transport.js';
 import { createMcpConnection } from './server-connection.js';
 import { adaptMcpTool } from './mcp-tool-adapter.js';
 import { bootstrapLog } from '../core/bootstrap.js';
+import type { McpToastNotifier } from '../hooks/mcp-toast-notifier.js';
 
 export { sanitizeToolId } from './mcp-tool-adapter.js';
 
@@ -68,12 +69,15 @@ export class McpToolProvider implements ToolProvider {
   private warmUpPromise: Promise<ToolDefinition[]> | null = null;
   private warmupTimeoutMs: number;
   private activeTimers = new Set<NodeJS.Timeout>();
+  /** Optional TUI toast reporter for connection lifecycle events (Ticket #16). */
+  private toastNotifier?: McpToastNotifier;
 
   constructor(
     servers: Record<string, McpServerConfig> | McpServerConfig[],
     cache = globalAdapterCache,
     factory = new TransportFactory(),
     warmupTimeoutMs = DEFAULT_WARMUP_TIMEOUT_MS,
+    toastNotifier?: McpToastNotifier,
   ) {
     const rawList = Array.isArray(servers)
       ? servers
@@ -84,6 +88,7 @@ export class McpToolProvider implements ToolProvider {
     this.cache = cache;
     this.factory = factory;
     this.warmupTimeoutMs = warmupTimeoutMs;
+    this.toastNotifier = toastNotifier;
     this.factory.register('local', new LocalTransportConnector());
     this.factory.register('remote', new RemoteTransportConnector());
   }
@@ -148,10 +153,12 @@ export class McpToolProvider implements ToolProvider {
               this.executableTools.set(definition.id, executable);
             }
             bootstrapLog(`[Tool Search] Connected MCP server "${serverName}" — loaded ${serverTools.length} tool(s).`);
+            this.toastNotifier?.onServerConnected(serverName, serverTools.length);
           } catch (err) {
             let errMsg = err instanceof Error ? err.message : String(err);
             errMsg = errMsg.replace(/\s*\.?\s*Is the computer able to access the url\??/gi, '');
             bootstrapLog(`[Tool Search] Failed MCP server "${serverName}": ${errMsg}`);
+            this.toastNotifier?.onServerFailed(serverName, errMsg);
           }
           return serverTools;
         })();

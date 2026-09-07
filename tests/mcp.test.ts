@@ -264,7 +264,8 @@ describe('MCP Connection & Provider Lifecycle', () => {
     // Regression: raw console.log/console.warn during MCP prewarm printed
     // directly into the OpenCode TUI alternate screen buffer, clobbering the
     // prompt with "[Tool Search] ✔ Connected MCP server ..." lines. All
-    // connection status must go to the file-based bootstrapLog instead.
+    // connection status must go to the file-based bootstrapLog instead, and
+    // per-server status surfaces as TUI toasts via the McpToastNotifier.
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -280,6 +281,10 @@ describe('MCP Connection & Provider Lifecycle', () => {
       connect: vi.fn().mockResolvedValue({ close: vi.fn() }),
     });
 
+    const onServerConnected = vi.fn();
+    const onServerFailed = vi.fn();
+    const toastNotifier = { onServerConnected, onServerFailed } as any;
+
     const provider = new McpToolProvider(
       [
         { name: 'ok_srv', type: 'remote', url: 'https://ok.example.com' },
@@ -288,6 +293,7 @@ describe('MCP Connection & Provider Lifecycle', () => {
       mockCache,
       mockFactory,
       1000,
+      toastNotifier,
     );
 
     vi.spyOn(mockCache, 'getOrCreate').mockImplementation(async (key) => {
@@ -302,6 +308,10 @@ describe('MCP Connection & Provider Lifecycle', () => {
     expect(logSpy).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
+
+    // Ticket #16 AC: toast callbacks are invoked with per-server status.
+    expect(onServerConnected).toHaveBeenCalledWith('ok_srv', 1);
+    expect(onServerFailed).toHaveBeenCalledWith('bad_srv', 'Connection failed');
 
     logSpy.mockRestore();
     warnSpy.mockRestore();
