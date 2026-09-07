@@ -28,3 +28,10 @@ Triage uses the default label vocabulary (`needs-triage`, `needs-info`, `ready-f
 ### Domain docs
 
 Single-context repository layout (`CONTEXT.md` + `docs/adr/`). See `docs/agents/domain.md`.
+
+## Branching & Release Policy
+
+All agents and contributors must adhere to the project branching and release strategy documented in `docs/architecture/branching-and-versioning-strategy.md`:
+- **Branch Naming**: Branches denote workflow state (`develop`, `main`, `release/vX.Y.Z`, `feature/*`, `fix/*`). **NEVER create branches named with bare version numbers (e.g. `v1.0.0`)** to prevent Git ref collisions with Git tags.
+- **Daily Work**: Branch off and merge into `develop`.
+- **Releases & Milestones**: Release candidates use `release/vX.Y.Z` branches. Immutable releases are marked with Git tags (`vX.Y.Z`). Production-ready code lives on `main`.
