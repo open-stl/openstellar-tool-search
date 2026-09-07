@@ -65,7 +65,11 @@ In a standard environment with ~100 MCP tools:
 
 https://github.com/open-stl/openstellar-tool-search/raw/v1.0.0/assets/openstellar-tool-search.mp4
 
-> 🎥 **Video Demo**: [Watch Full Screen (MP4)](assets/openstellar-tool-search.mp4) | [QuickTime (MOV)](assets/openstellar-tool-search.mov)
+> 🎥 **Video Demo**: 
+
+
+https://github.com/user-attachments/assets/4cad5981-6f0c-42d8-b7c5-32f42d6c5c7b
+
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
