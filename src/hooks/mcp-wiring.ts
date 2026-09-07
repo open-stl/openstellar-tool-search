@@ -4,6 +4,7 @@ import type { SessionToolRegistry } from '../engine/session-tool-registry.js';
 import { McpToolProvider, isServerEnabled } from '../mcp/mcp-tool-provider.js';
 import type { McpServerConfig } from '../mcp/types.js';
 import type { ToolDefinition } from '../catalog/tool-provider.js';
+import { bootstrapLog } from '../core/bootstrap.js';
 
 /**
  * Description for a warming server's placeholder tool. Echoes the
@@ -286,7 +287,7 @@ export function parseMcpConfig(raw: any): Record<string, McpServerConfig> | McpS
   // to v2. An empty object `{}` is ordinary invalid input, not a legacy map:
   // no warning.
   if (!('servers' in raw) && Object.keys(raw).length > 0) {
-    console.warn(
+    bootstrapLog(
       '[ToolSearchPlugin] Legacy bare-map MCP config is REJECTED: `mcp: { "<server>": {...} }` is no longer accepted. ' +
         'This plugin follows OpenCode v2\'s `mcp.servers` convention — use `mcp: { servers: { "<server>": {...} } }`.',
     );
