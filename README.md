@@ -401,6 +401,7 @@ OpenCode Startup
 | **`[Tool Search Required]` error** | The LLM attempted to call a `[deferred]` tool without searching first. | Call `tool_search({ query: "..." })` or `tool_search_regex({ pattern: "^name$" })` first. |
 | **MCP server status placeholder shown** | Server failed or timed out during prewarm. | Check server command/URL and stderr logs. Once fixed, restart OpenCode. |
 | **Legacy config warning** | Using old `mcp: { "<server>": {...} }` format. | Wrap server definitions in `mcp: { servers: { ... } }`. |
+| **Need connection/failure details** | Server status goes to the plugin's file log (never the terminal — stdout output clobbers the TUI). | Inspect `~/.local/share/opencode/log/tool-search.log`. The log self-rotates to `tool-search.log.old` at 5 MB (max ~10 MB on disk), so it never needs manual cleanup. |
 
 ---
 

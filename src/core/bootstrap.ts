@@ -8,6 +8,7 @@ import { UpdateCheckLifecycle } from '../hooks/update-check.js';
 import { McpWiring, parseMcpConfig } from '../hooks/mcp-wiring.js';
 import { DEFAULT_WARMUP_TIMEOUT_MS } from '../mcp/mcp-tool-provider.js';
 import { toast } from '../hooks/toast.js';
+import { McpToastNotifier } from '../hooks/mcp-toast-notifier.js';
 import { sanitizeStringList } from '../utils/tool-id.js';
 
 export const ALLOWED_CONFIG_KEYS = new Set(['alwaysLoad', 'maxResults', 'mode', 'resetTools', 'mcp', 'timeout']);
@@ -68,19 +69,40 @@ export function loadFallbackMcpConfig(workspaceDir?: string): Record<string, Mcp
   return undefined;
 }
 
+export const LOG_FILE_NAME = 'tool-search.log';
+export const ROTATED_LOG_FILE_NAME = 'tool-search.log.old';
+export const MAX_LOG_BYTES = 5 * 1024 * 1024;
+
+// Overridable only from tests; production always logs to the OpenCode log dir.
+let logDirOverride: string | undefined;
+
+/**
+ * File-based status log. Never writes to stdout/stderr — raw console output
+ * during plugin bootstrap clobbers the TUI alternate screen buffer.
+ * Rotates the log at a size cap so disk usage stays bounded (~2x cap max).
+ * All errors are swallowed: logging must never break the plugin lifecycle.
+ */
 export function bootstrapLog(msg: string, data?: unknown): void {
   try {
-    const logDir = path.join(os.homedir(), '.local', 'share', 'opencode', 'log');
+    const logDir = logDirOverride ?? path.join(os.homedir(), '.local', 'share', 'opencode', 'log');
     if (!fs.existsSync(logDir)) {
       fs.mkdirSync(logDir, { recursive: true });
     }
-    const logPath = path.join(logDir, 'tool-search.log');
+    const logPath = path.join(logDir, LOG_FILE_NAME);
+    if (fs.existsSync(logPath) && fs.statSync(logPath).size >= MAX_LOG_BYTES) {
+      fs.renameSync(logPath, path.join(logDir, ROTATED_LOG_FILE_NAME));
+    }
     const timestamp = new Date().toISOString();
     const dataStr = data !== undefined ? ` ${JSON.stringify(data)}` : '';
     fs.appendFileSync(logPath, `[${timestamp}] ${msg}${dataStr}\n`, 'utf-8');
   } catch {
     // silently ignore log writing errors
   }
+}
+
+/** Test-only: redirect the log directory. Pass undefined to restore default. */
+export function setLogDirForTesting(dir: string | undefined): void {
+  logDirOverride = dir;
 }
 
 export interface PluginCore {
@@ -114,11 +136,15 @@ export async function bootstrapPluginCore(
     notify: (title, message, variant, duration) => toast(ctx, title, message, variant, duration),
   });
 
+  const mcpToastNotifier = new McpToastNotifier(
+    (title, message, variant, duration) => toast(ctx, title, message, variant, duration),
+  );
   const mcp = new McpWiring(
     runtime.vault,
     runtime.sessionRegistry,
     runtime.searchTools,
     opts.timeout ?? DEFAULT_WARMUP_TIMEOUT_MS,
+    mcpToastNotifier,
   );
   const updateCheck = new UpdateCheckLifecycle(ctx);
 
