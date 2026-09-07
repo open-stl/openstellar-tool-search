@@ -37,7 +37,7 @@
     "deferred-loading"
   ],
   "author": "OpenStellar",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/open-stl/openstellar-tool-search.git"
