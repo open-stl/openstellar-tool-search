@@ -93,12 +93,7 @@ https://github.com/open-stl/openstellar-tool-search/raw/v1.0.0/assets/openstella
 
 ### 🤖 1-Click AI Setup (Recommended)
 
-You can have your AI assistant in OpenCode install and configure this plugin automatically, including migrating existing MCP servers into deferred loading.
-
-👉 **[View or Copy the 1-Click AI Setup Prompt](INSTALL_PROMPT.md)**
-
-<details>
-<summary><b>Click to expand the 1-Click Setup Prompt directly</b></summary>
+Copy and paste the prompt below into your AI assistant in OpenCode to install, configure, and migrate your MCP servers automatically:
 
 ```text
 Please install and configure the @openstellar/tool-search plugin for OpenCode:
@@ -112,25 +107,44 @@ Please install and configure the @openstellar/tool-search plugin for OpenCode:
 3. Configure the plugin and migrate existing MCP servers:
    - Check if there is an existing top-level "mcp" or "mcp.servers" configuration in the file.
    - If existing MCP servers exist, MOVE those server definitions inside the plugin config under `mcp.servers: { ... }` so that Tool Search can manage, prewarm, and defer them, and remove the top-level "mcp" key to prevent duplicate initialization.
-   - Add or merge the plugin entry into the "plugin" array:
-     [
-       "@openstellar/tool-search@latest",
+   - For OpenCode 1.x config syntax (using "plugin" array):
+     "plugin": [
+       [
+         "@openstellar/tool-search@latest",
+         {
+           "maxResults": 5,
+           "mode": "hybrid",
+           "mcp": {
+             "servers": {
+               // <moved existing MCP servers here>
+             }
+           }
+         }
+       ]
+     ]
+   - Or for OpenCode 2.0 (`opencode2`) config syntax (using "plugins" array):
+     "plugins": [
        {
-         "maxResults": 5,
-         "mode": "hybrid",
-         "mcp": {
-           "servers": {
-             // <moved existing MCP servers here>
+         "package": "@openstellar/tool-search@latest",
+         "options": {
+           "maxResults": 5,
+           "mode": "hybrid",
+           "mcp": {
+             "servers": {
+               // <moved existing MCP servers here>
+             }
            }
          }
        }
      ]
-   - If the "plugin" array already exists, merge this entry cleanly. If not, create it.
+   - Note: OpenCode 2.0 also supports the array-tuple format `["@openstellar/tool-search@latest", { ... }]` in "plugins" or "plugin".
+   - If the plugin/plugins array already exists, merge this entry cleanly. If not, create it.
    - Preserve all existing comments, formatting, and other non-MCP settings.
 
 4. Validate the JSON/JSONC syntax and confirm when finished so I can restart OpenCode.
 ```
-</details>
+
+👉 *Prefer a separate file? See [INSTALL_PROMPT.md](INSTALL_PROMPT.md).*
 
 ---
 
