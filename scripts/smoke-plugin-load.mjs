@@ -25,7 +25,7 @@ try {
     [
       '--input-type=module',
       '-e',
-      "import('@openstellar/tool-search').then(async (mod) => { if (typeof mod.default !== 'function') throw new Error('Default export is not a function'); if (typeof mod.ToolSearchPlugin !== 'function') throw new Error('ToolSearchPlugin export is not a function'); const ctx = { client: { tui: { showToast: async () => {} } } }; const result = await mod.default(ctx, { tool: {} }); if (!result || typeof result !== 'object') throw new Error('Plugin did not return an object'); console.log('plugin-smoke-ok'); })",
+      "import('@openstellar/tool-search').then(async (mod) => { if (!mod.default || typeof mod.default !== 'object') throw new Error('Default export is not an object'); if (typeof mod.default.id !== 'string') throw new Error('Default export missing id string'); if (typeof mod.default.setup !== 'function') throw new Error('Default export missing setup function'); if (typeof mod.default.server !== 'function') throw new Error('Default export missing server function'); if (!mod.plugin || typeof mod.plugin !== 'object') throw new Error('plugin export is not an object'); const ctx = { client: { tui: { showToast: async () => {} } } }; const res = await mod.default.server(ctx, {}); if (!res || typeof res !== 'object') throw new Error('Plugin server did not return hooks object'); console.log('plugin-smoke-ok'); })",
     ],
     { cwd: tempDir },
   );

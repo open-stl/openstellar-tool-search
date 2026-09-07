@@ -1,0 +1,305 @@
+{
+  "metadata": {
+    "generatedAt": "2026-09-06T09:59:57.785Z",
+    "benchmarkVersion": "1.0.0",
+    "tokenizer": "Xenova/gpt-4o (o200k_base)",
+    "corpusScale": "105 tools across 9 production MCP servers",
+    "protocol": "TREC / BEIR / Berkeley Function-Calling Leaderboard (BFCL v1–v4)"
+  },
+  "summary": {
+    "catalogScale": 105,
+    "singleTurn": {
+      "baselinePayloadTokens": 28846,
+      "deferredPayloadTokens": 27761,
+      "netSavedTokens": 1085,
+      "reductionPercentage": 3.76
+    },
+    "retrieval": {
+      "ndcg1": 1,
+      "ndcg3": 0.9421,
+      "ndcg3_95CI": [
+        0.9173,
+        0.9669
+      ],
+      "mrr": 1,
+      "mrr_95CI": [
+        1,
+        1
+      ],
+      "map": 1,
+      "map_95CI": [
+        1,
+        1
+      ],
+      "hitRate1": 100,
+      "hitRate3": 100,
+      "hitRate5": 100
+    },
+    "latencyMs": {
+      "mean": 0.05,
+      "p50": 0.043,
+      "p95": 0.099,
+      "p99": 0.099
+    },
+    "multiTurnScaleAt100": {
+      "cumulativeSavedTokens": 93500,
+      "netSavedCostUSD": 0.2338
+    }
+  },
+  "toolBreakdown": [
+    {
+      "name": "postman_searchPostmanElements",
+      "server": "postman",
+      "category": "api",
+      "baselineTokens": 520,
+      "deferredTokens": 476,
+      "savedTokens": 44,
+      "reductionPct": 8.46
+    },
+    {
+      "name": "postman_getWorkspaces",
+      "server": "postman",
+      "category": "api",
+      "baselineTokens": 226,
+      "deferredTokens": 215,
+      "savedTokens": 11,
+      "reductionPct": 4.87
+    },
+    {
+      "name": "stitch_create_design_system",
+      "server": "stitch",
+      "category": "design",
+      "baselineTokens": 634,
+      "deferredTokens": 589,
+      "savedTokens": 45,
+      "reductionPct": 7.1
+    },
+    {
+      "name": "stitch_generate_variants",
+      "server": "stitch",
+      "category": "design",
+      "baselineTokens": 312,
+      "deferredTokens": 296,
+      "savedTokens": 16,
+      "reductionPct": 5.13
+    },
+    {
+      "name": "pieces_search_memory",
+      "server": "pieces",
+      "category": "memory",
+      "baselineTokens": 462,
+      "deferredTokens": 435,
+      "savedTokens": 27,
+      "reductionPct": 5.84
+    },
+    {
+      "name": "pieces_create_gcal_event",
+      "server": "pieces",
+      "category": "productivity",
+      "baselineTokens": 359,
+      "deferredTokens": 338,
+      "savedTokens": 21,
+      "reductionPct": 5.85
+    },
+    {
+      "name": "codebase_memory_query_graph",
+      "server": "codebase-memory",
+      "category": "graph",
+      "baselineTokens": 226,
+      "deferredTokens": 205,
+      "savedTokens": 21,
+      "reductionPct": 9.29
+    },
+    {
+      "name": "codebase_memory_trace_path",
+      "server": "codebase-memory",
+      "category": "graph",
+      "baselineTokens": 365,
+      "deferredTokens": 340,
+      "savedTokens": 25,
+      "reductionPct": 6.85
+    },
+    {
+      "name": "codebase_memory_get_architecture",
+      "server": "codebase-memory",
+      "category": "graph",
+      "baselineTokens": 198,
+      "deferredTokens": 202,
+      "savedTokens": -4,
+      "reductionPct": -2.02
+    },
+    {
+      "name": "agentmemory_memory_sentinel_create",
+      "server": "agentmemory",
+      "category": "memory",
+      "baselineTokens": 173,
+      "deferredTokens": 177,
+      "savedTokens": -4,
+      "reductionPct": -2.31
+    },
+    {
+      "name": "agentmemory_memory_recall",
+      "server": "agentmemory",
+      "category": "memory",
+      "baselineTokens": 144,
+      "deferredTokens": 133,
+      "savedTokens": 11,
+      "reductionPct": 7.64
+    },
+    {
+      "name": "agentmemory_memory_action_create",
+      "server": "agentmemory",
+      "category": "memory",
+      "baselineTokens": 185,
+      "deferredTokens": 189,
+      "savedTokens": -4,
+      "reductionPct": -2.16
+    },
+    {
+      "name": "playwright_browser_fill_form",
+      "server": "playwright",
+      "category": "browser",
+      "baselineTokens": 229,
+      "deferredTokens": 233,
+      "savedTokens": -4,
+      "reductionPct": -1.75
+    },
+    {
+      "name": "playwright_browser_cookie_set",
+      "server": "playwright",
+      "category": "browser",
+      "baselineTokens": 224,
+      "deferredTokens": 227,
+      "savedTokens": -3,
+      "reductionPct": -1.34
+    },
+    {
+      "name": "context7_query_docs",
+      "server": "context7",
+      "category": "docs",
+      "baselineTokens": 118,
+      "deferredTokens": 122,
+      "savedTokens": -4,
+      "reductionPct": -3.39
+    },
+    {
+      "name": "github_grep_searchGitHub",
+      "server": "github-grep",
+      "category": "search",
+      "baselineTokens": 200,
+      "deferredTokens": 204,
+      "savedTokens": -4,
+      "reductionPct": -2
+    },
+    {
+      "name": "exa_web_search_advanced_exa",
+      "server": "exa",
+      "category": "search",
+      "baselineTokens": 220,
+      "deferredTokens": 224,
+      "savedTokens": -4,
+      "reductionPct": -1.82
+    },
+    {
+      "name": "sequential_thinking_sequentialthinking",
+      "server": "sequential-thinking",
+      "category": "reasoning",
+      "baselineTokens": 150,
+      "deferredTokens": 154,
+      "savedTokens": -4,
+      "reductionPct": -2.67
+    }
+  ],
+  "multiTurnCompounding": [
+    {
+      "turns": 1,
+      "cumulativeBaselineTokens": 28846,
+      "cumulativeDeferredTokens": 27911,
+      "cumulativeSavedTokens": 935,
+      "baselineCostUSD": 0.0721,
+      "deferredCostUSD": 0.0698,
+      "netSavedCostUSD": 0.0023,
+      "relativeSavingsPct": 3.24
+    },
+    {
+      "turns": 5,
+      "cumulativeBaselineTokens": 151730,
+      "cumulativeDeferredTokens": 147055,
+      "cumulativeSavedTokens": 4675,
+      "baselineCostUSD": 0.3793,
+      "deferredCostUSD": 0.3676,
+      "netSavedCostUSD": 0.0117,
+      "relativeSavingsPct": 3.08
+    },
+    {
+      "turns": 10,
+      "cumulativeBaselineTokens": 322210,
+      "cumulativeDeferredTokens": 312860,
+      "cumulativeSavedTokens": 9350,
+      "baselineCostUSD": 0.8055,
+      "deferredCostUSD": 0.7822,
+      "netSavedCostUSD": 0.0234,
+      "relativeSavingsPct": 2.9
+    },
+    {
+      "turns": 20,
+      "cumulativeBaselineTokens": 719420,
+      "cumulativeDeferredTokens": 700720,
+      "cumulativeSavedTokens": 18700,
+      "baselineCostUSD": 1.7985,
+      "deferredCostUSD": 1.7518,
+      "netSavedCostUSD": 0.0467,
+      "relativeSavingsPct": 2.6
+    },
+    {
+      "turns": 30,
+      "cumulativeBaselineTokens": 1191630,
+      "cumulativeDeferredTokens": 1163580,
+      "cumulativeSavedTokens": 28050,
+      "baselineCostUSD": 2.9791,
+      "deferredCostUSD": 2.9089,
+      "netSavedCostUSD": 0.0701,
+      "relativeSavingsPct": 2.35
+    },
+    {
+      "turns": 40,
+      "cumulativeBaselineTokens": 1738840,
+      "cumulativeDeferredTokens": 1701440,
+      "cumulativeSavedTokens": 37400,
+      "baselineCostUSD": 4.3471,
+      "deferredCostUSD": 4.2536,
+      "netSavedCostUSD": 0.0935,
+      "relativeSavingsPct": 2.15
+    },
+    {
+      "turns": 50,
+      "cumulativeBaselineTokens": 2361050,
+      "cumulativeDeferredTokens": 2314300,
+      "cumulativeSavedTokens": 46750,
+      "baselineCostUSD": 5.9026,
+      "deferredCostUSD": 5.7857,
+      "netSavedCostUSD": 0.1169,
+      "relativeSavingsPct": 1.98
+    },
+    {
+      "turns": 75,
+      "cumulativeBaselineTokens": 4244700,
+      "cumulativeDeferredTokens": 4174575,
+      "cumulativeSavedTokens": 70125,
+      "baselineCostUSD": 10.6118,
+      "deferredCostUSD": 10.4364,
+      "netSavedCostUSD": 0.1753,
+      "relativeSavingsPct": 1.65
+    },
+    {
+      "turns": 100,
+      "cumulativeBaselineTokens": 6597100,
+      "cumulativeDeferredTokens": 6503600,
+      "cumulativeSavedTokens": 93500,
+      "baselineCostUSD": 16.4928,
+      "deferredCostUSD": 16.259,
+      "netSavedCostUSD": 0.2338,
+      "relativeSavingsPct": 1.42
+    }
+  ]
+}

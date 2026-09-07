@@ -1,171 +1,116 @@
-import type { Hooks, Plugin, PluginInput, PluginOptions } from '@opencode-ai/plugin';
-import { tool } from '@opencode-ai/plugin';
-import { ToolVault } from './vault.js';
-import type { ToolMeta, ToolSearchConfig } from './types.js';
-import { checkForUpdate, formatUpdateMessage } from './hooks/auto-update-checker.js';
+import type { Hooks, Plugin, PluginOptions } from '@opencode-ai/plugin';
+import { SEARCH_IDS } from './engine/session-engine.js';
+import { parseMcpConfig } from './hooks/mcp-wiring.js';
+import { toast } from './hooks/toast.js';
+import { setupV2 } from './v2/setup.js';
+import { bootstrapPluginCore, validateConfig, buildEmbedding } from './core/bootstrap.js';
 
-const SEARCH_IDS = new Set(['tool_search', 'tool_search_regex']);
-const DEFAULT_DEFER = '[d]';
+/**
+ * OpenCode adapter for the tool-search runtime. Kept deliberately thin: all
+ * deferred-tool behavior (catalog, authorization, delivery filtering,
+ * semantic prebuild, compaction) lives in SessionRuntime; MCP warm-up and
+ * process cleanup live in McpWiring; update-check dedup/latch lives in
+ * UpdateCheckLifecycle; and toast/deferral formatting live in the hooks
+ * modules. This file only translates OpenCode hook calls into those seams.
+ */
+const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promise<Hooks> => {
+  const { runtime, mcp, updateCheck } = await bootstrapPluginCore(ctx, options as any);
 
-function getFirstSentence(desc: string): string {
-  if (!desc) return '';
-  const firstNewline = desc.indexOf('\n');
-  const firstLine = firstNewline !== -1 ? desc.slice(0, firstNewline).trim() : desc.trim();
-
-  const abbreviations = new Set(['eg', 'ie', 'dr', 'mr', 'ms', 'mrs', 'vs', 'etc']);
-  const sentenceBoundaryRegex = /\.(?:\s|$)/g;
-  let match;
-  while ((match = sentenceBoundaryRegex.exec(firstLine)) !== null) {
-    const index = match.index;
-    const beforeSegment = firstLine.slice(0, index);
-    
-    // Find the word right before the period
-    const wordMatch = beforeSegment.match(/\b[a-zA-Z.]+$/);
-    if (wordMatch) {
-      const cleanWord = wordMatch[0].toLowerCase().replace(/\./g, '');
-      // If it's a known abbreviation or a single letter (like search middle initials)
-      if (abbreviations.has(cleanWord) || cleanWord.length === 1) {
-        continue;
-      }
-    }
-    return firstLine.slice(0, index + 1).trim();
-  }
-  return firstLine;
-}
-
-function toast(
-  ctx: PluginInput,
-  title: string,
-  msg: string,
-  variant: 'info' | 'success' | 'warning' | 'error' = 'info',
-  duration = 3000,
-): void {
-  setTimeout(() => {
-    ctx.client.tui.showToast({ body: { title, message: msg, variant, duration } }).catch(() => {});
-  }, 100);
-}
-
-export const ToolSearchPlugin: Plugin = async (ctx, options?: PluginOptions): Promise<Hooks> => {
-  const opts = (options ?? {}) as ToolSearchConfig;
-  const alwaysOn = new Set([...SEARCH_IDS, ...(opts.alwaysLoad ?? [])]);
-  const maxResults = opts.searchLimit ?? 10;
-  const deferLabel = opts.deferDescription ?? DEFAULT_DEFER;
-
-  const vault = new ToolVault({
-    k1: opts.bm25?.k1,
-    b: opts.bm25?.b,
-    embedding: opts.embedding ?? { enabled: true },
-  });
-
-  let deferrals = 0;
-  let total = 0;
-  let alerted = false;
-  let updateCheckInFlight: Promise<void> | null = null;
-  let updateStaged = false;
-
-  setTimeout(() => {
-    toast(ctx, 'Tool Search', 'Active — tools will be deferred on first prompt.', 'info', 4000);
-  }, 3000);
-
-  return {
-    tool: {
-      tool_search: tool({
-        description: `Find deferred tools marked "${deferLabel}" by task, name, or prefix. Returns full tool IDs and parameter schemas.\nCall tool_search({ query: "<task or name>" }). For regex, use tool_search_regex({ pattern: "<regex>" }).`,
-        args: {
-          query: tool.schema
-            .string()
-            .describe('Task, tool name, or prefix.'),
-        },
-        async execute(args) {
-          const hits = await vault.query(args.query, maxResults);
-
-          if (hits.length === 0) {
-            return `No matches for "${args.query}". Try broader terms or tool_search_regex.`;
-          }
-
-          const lines = hits.map((r) => {
-            const paramsInfo = r.parameters && typeof r.parameters === 'object' && Object.keys(r.parameters).length > 0
-              ? `\n  parameters: ${JSON.stringify(r.parameters)}`
-              : '';
-            return `${r.id}: ${r.description}${paramsInfo}`;
-          }).join('\n\n');
-          return `Found ${hits.length} tool(s):\n\n${lines}`;
-        },
-      }),
-
-      tool_search_regex: tool({
-        description: `Find tools by case-insensitive regex over IDs and descriptions. Returns full tool IDs and parameter schemas.\nCall tool_search_regex({ pattern: "<regex>" }). For task or name search, use tool_search({ query: "<task or name>" }).`,
-        args: {
-          pattern: tool.schema
-            .string()
-            .describe('Case-insensitive regex for tool IDs and descriptions.'),
-        },
-        async execute(args) {
-          const hits = vault.grep(args.pattern, maxResults);
-          if (hits.length === 0) {
-            return `No tools matched pattern "${args.pattern}".`;
-          }
-          const lines = hits.map((r) => {
-            const paramsInfo = r.parameters && typeof r.parameters === 'object' && Object.keys(r.parameters).length > 0
-              ? `\n  parameters: ${JSON.stringify(r.parameters)}`
-              : '';
-            return `${r.id}: ${r.description}${paramsInfo}`;
-          }).join('\n\n');
-          return `Found ${hits.length} tool(s):\n\n${lines}`;
-        },
-      }),
-    },
-
-    'tool.definition': async (input, output) => {
-      if (SEARCH_IDS.has(input.toolID)) return;
-
-      vault.add(input.toolID, output.description, output.parameters);
-
-      if (!alwaysOn.has(input.toolID)) {
-        const firstSentence = getFirstSentence(output.description);
-        output.description = firstSentence ? `${firstSentence} ${deferLabel}` : deferLabel;
-      }
-    },
-
-    'experimental.chat.system.transform': async (input, output) => {
-      total = vault.count;
-      deferrals = total - (alwaysOn.size - SEARCH_IDS.size);
-      if (deferrals < 0) deferrals = 0;
-
-      if (deferrals > 0) {
-        output.system.push(
-          `${deferrals}/${total} tools are deferred ("${deferLabel}"). `
-          + `Before calling one, retrieve it with tool_search({ query: "<task or name>" }) or tool_search_regex({ pattern: "<regex>" }).`
-        );
-
-        if (!alerted) {
-          alerted = true;
-          toast(ctx, 'Tool Search', `${deferrals}/${total} tools deferred.`, 'info', 4000);
+  const hooks: Hooks = {
+    config: async (cfg) => {
+      try {
+        const topLevelMcp = parseMcpConfig((cfg as { mcp?: unknown } | undefined)?.mcp);
+        if (topLevelMcp && !mcp.isInitialized) {
+          mcp.init(topLevelMcp);
+          await mcp.preWarm();
         }
+      } catch {
+        // silently ignore
       }
     },
-
-    event: async ({ event }) => {
-      if (event.type !== 'session.created' || updateStaged) return;
-      if (!updateCheckInFlight) {
-        updateCheckInFlight = (async () => {
-          try {
-            const result = await checkForUpdate();
-            const msg = formatUpdateMessage(result);
-            if (result.outcome === 'update-staged') {
-              updateStaged = true;
-              toast(ctx, msg.title, msg.message, msg.variant, 6000);
-            } else if (result.outcome !== 'up-to-date') {
-              toast(ctx, msg.title, msg.message, msg.variant, 6000);
-            }
-          } catch (error) {
-            toast(ctx, 'Tool Search Update Check', error instanceof Error ? error.message : 'Update check failed.', 'error', 6000);
-          } finally {
-            updateCheckInFlight = null;
-          }
-        })();
+    tool: runtime.searchTools,
+    'tool.definition': async (input, output) => {
+      try {
+        if (!input || !output || SEARCH_IDS.has(input.toolID)) return;
+        const jsonSchema = (output as { jsonSchema?: unknown }).jsonSchema;
+        output.description = runtime.deferTool(input.toolID, output.description, output.parameters, jsonSchema);
+      } catch {
+        // silently ignore
       }
-      await updateCheckInFlight;
+    },
+    'tool.execute.before': async (input) => {
+      if (!input || SEARCH_IDS.has(input.tool)) return;
+      const meta = runtime.vault.resolveAlias(input.tool);
+      const canonical = meta?.id ?? input.tool;
+      runtime.assertAuthorized(input.tool, input.sessionID, canonical);
+    },
+    'tool.execute.after': async (input, output) => {
+      try {
+        if (!input || !output) return;
+        const notice = runtime.handleToolExecuted(input.tool, input.sessionID);
+        if (notice) {
+          output.output = `${String(output.output ?? '')}${notice}`;
+        }
+      } catch {
+        // silently ignore
+      }
+    },
+    'experimental.chat.messages.transform': async (_input, output) => {
+      try {
+        const msgs = output?.messages;
+        if (Array.isArray(msgs) && msgs.length > 0) {
+          const firstMsg = msgs[0];
+          const sessionID = (firstMsg?.info as { sessionID?: string } | undefined)?.sessionID;
+          runtime.syncSleevCompression(sessionID, msgs);
+        }
+      } catch {
+        // silently ignore
+      }
+    },
+    'experimental.chat.system.transform': async (input, output) => {
+      try {
+        const inputTyped = input as { sessionID?: string; messages?: Array<{ role?: string; content?: unknown }> };
+        runtime.syncSleevCompression(inputTyped?.sessionID, inputTyped?.messages);
+        const state = runtime.prepareForSystemTransform();
+        if (state.policyText && output?.system) {
+          output.system.push(state.policyText);
+        }
+        if (state.alert) {
+          toast(ctx, state.alert.title, state.alert.message, state.alert.variant, state.alert.duration);
+        }
+      } catch {
+        // silently ignore
+      }
+    },
+    'experimental.session.compacting': async (input, output) => {
+      try {
+        if (!input?.sessionID || !output?.context) return;
+        output.context.push(runtime.compactSession(input.sessionID));
+      } catch {
+        // silently ignore
+      }
+    },
+    event: async ({ event }) => {
+      try {
+        runtime.handleSessionEvent(event);
+        if (event?.type && event.type !== 'session.deleted') {
+          await updateCheck.handleEvent(event.type);
+        }
+      } catch {
+        // silently ignore
+      }
     },
   };
+
+  return hooks;
 };
+
+export { validateConfig, buildEmbedding };
+export const ToolSearchPlugin = ToolSearchPluginImpl;
+export const plugin = {
+  id: 'openstellar-tool-search',
+  server: ToolSearchPluginImpl,
+  setup: setupV2,
+};
+
+export default plugin;

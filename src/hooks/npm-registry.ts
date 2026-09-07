@@ -20,7 +20,7 @@ const NPM_CONFIG_TIMEOUT = 5000;
 // ResolveEffects – injected execFile for testability (no real npm in tests)
 // ---------------------------------------------------------------------------
 
-export interface ResolveEffects {
+interface ResolveEffects {
     execFile: (
         cmd: string,
         args: string[],
