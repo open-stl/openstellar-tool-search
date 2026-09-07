@@ -63,8 +63,6 @@ In a standard environment with ~100 MCP tools:
 
 ## Demo in Action & How It Works
 
-https://github.com/open-stl/openstellar-tool-search/raw/v1.0.0/assets/openstellar-tool-search.mp4
-
 > 🎥 **Video Demo**: 
 
 
