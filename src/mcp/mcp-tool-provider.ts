@@ -7,6 +7,7 @@ import { LocalTransportConnector } from './transports/local-transport.js';
 import { RemoteTransportConnector } from './transports/remote-transport.js';
 import { createMcpConnection } from './server-connection.js';
 import { adaptMcpTool } from './mcp-tool-adapter.js';
+import { bootstrapLog } from '../core/bootstrap.js';
 
 export { sanitizeToolId } from './mcp-tool-adapter.js';
 
@@ -146,11 +147,11 @@ export class McpToolProvider implements ToolProvider {
               serverTools.push(definition);
               this.executableTools.set(definition.id, executable);
             }
-            console.log(`\x1b[36m[Tool Search]\x1b[0m \x1b[32m✔ Connected\x1b[0m MCP server \x1b[1m"${serverName}"\x1b[0m — loaded \x1b[33m${serverTools.length}\x1b[0m tool(s).`);
+            bootstrapLog(`[Tool Search] Connected MCP server "${serverName}" — loaded ${serverTools.length} tool(s).`);
           } catch (err) {
             let errMsg = err instanceof Error ? err.message : String(err);
             errMsg = errMsg.replace(/\s*\.?\s*Is the computer able to access the url\??/gi, '');
-            console.warn(`\x1b[36m[Tool Search]\x1b[0m \x1b[31m✖ Failed\x1b[0m MCP server \x1b[1m"${serverName}"\x1b[0m: \x1b[31m${errMsg}\x1b[0m`);
+            bootstrapLog(`[Tool Search] Failed MCP server "${serverName}": ${errMsg}`);
           }
           return serverTools;
         })();
@@ -165,9 +166,10 @@ export class McpToolProvider implements ToolProvider {
           }
         } else {
           // CEILING CUT: the server did not settle within its deadline. Cut it
-          // (contributes no tools) and warn loudly so the operator knows why
-          // its tools are unavailable this session.
-          console.warn(
+          // (contributes no tools) and log so the operator knows why
+          // its tools are unavailable this session. Never write to stdout —
+          // raw console output clobbers the TUI alternate screen buffer.
+          bootstrapLog(
             `[McpToolProvider] MCP server "${serverName}" did not settle within ${deadline}ms — cutting it; its tools are unavailable this session.`,
           );
         }

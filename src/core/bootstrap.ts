@@ -15,7 +15,7 @@ export const ALLOWED_CONFIG_KEYS = new Set(['alwaysLoad', 'maxResults', 'mode', 
 export function validateConfig(rawOpts: Record<string, unknown>): void {
   for (const key of Object.keys(rawOpts)) {
     if (!ALLOWED_CONFIG_KEYS.has(key)) {
-      console.warn(
+      bootstrapLog(
         `[ToolSearchPlugin] Unknown or deprecated configuration key "${key}". Allowed keys: ${Array.from(ALLOWED_CONFIG_KEYS).join(', ')}.`,
       );
     }

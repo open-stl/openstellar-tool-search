@@ -259,6 +259,54 @@ describe('MCP Connection & Provider Lifecycle', () => {
     expect(tools.length).toBe(1);
     expect(tools[0].id).toBe('good_srv_good_tool');
   });
+
+  it('never writes connection status to stdout/stderr (TUI overlay regression)', async () => {
+    // Regression: raw console.log/console.warn during MCP prewarm printed
+    // directly into the OpenCode TUI alternate screen buffer, clobbering the
+    // prompt with "[Tool Search] ✔ Connected MCP server ..." lines. All
+    // connection status must go to the file-based bootstrapLog instead.
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const mockClient = {
+      listTools: vi.fn().mockResolvedValue({
+        tools: [{ name: 'tool_1', description: 'Tool one', inputSchema: { type: 'object', properties: {} } }],
+      }),
+    };
+    const mockCache = new AdapterCache();
+    const mockFactory = new TransportFactory();
+    mockFactory.register('remote', {
+      connect: vi.fn().mockResolvedValue({ close: vi.fn() }),
+    });
+
+    const provider = new McpToolProvider(
+      [
+        { name: 'ok_srv', type: 'remote', url: 'https://ok.example.com' },
+        { name: 'bad_srv', type: 'remote', url: 'https://bad.example.com' },
+      ],
+      mockCache,
+      mockFactory,
+      1000,
+    );
+
+    vi.spyOn(mockCache, 'getOrCreate').mockImplementation(async (key) => {
+      if (key.includes('ok_srv')) {
+        return { client: mockClient as any, transport: { close: vi.fn() }, tools: {} };
+      }
+      return { client: { listTools: vi.fn().mockRejectedValue(new Error('Connection failed')) } as any, transport: { close: vi.fn() }, tools: {} };
+    });
+
+    await provider.warmUp();
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
 });
 
 // ============================================================================
