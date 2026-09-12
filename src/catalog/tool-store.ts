@@ -129,6 +129,7 @@ export class ToolStore {
   }
 
   get(id: string): ToolMeta | undefined { return this.store.get(id); }
+  has(id: string): boolean { return this.store.has(id); }
   list(): ToolMeta[] { return Array.from(this.store.values()); }
   get count(): number { return this.store.size; }
 

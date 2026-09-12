@@ -50,9 +50,10 @@ export function getDefaultDeliveryHistoryPath(): string {
   return join(resolveStorageDir(), 'session-deliveries.json');
 }
 
-interface DeliveryHistoryPersistenceOptions {
+export interface DeliveryHistoryPersistenceOptions {
   filePath?: string;
   debounceMs?: number;
+  maxSessions?: number;
 }
 
 const activeDeliveryHistoryInstances = new Set<DeliveryHistoryPersistence>();
@@ -245,30 +246,51 @@ export class DeliveryHistoryPersistence {
 export class DeliveryHistory {
   private history = new Map<string, Map<string, string>>();
   private persistence: DeliveryHistoryPersistence;
+  private readonly maxSessions: number;
 
   constructor(options?: DeliveryHistoryPersistenceOptions | DeliveryHistoryPersistence) {
     if (options && 'save' in options && typeof options.save === 'function') {
       this.persistence = options as DeliveryHistoryPersistence;
+      this.maxSessions = 256;
     } else {
-      this.persistence = new DeliveryHistoryPersistence(options as DeliveryHistoryPersistenceOptions | undefined);
+      const opts = options as DeliveryHistoryPersistenceOptions | undefined;
+      this.persistence = new DeliveryHistoryPersistence(opts);
+      this.maxSessions = opts?.maxSessions ?? 256;
     }
     this.history = this.persistence.load();
   }
 
+  private getDeliveredFingerprint(session: Map<string, string>, canonicalID: string): string | undefined {
+    const direct = session.get(canonicalID);
+    if (direct) return direct;
+    const norm = normalizeToolId(canonicalID);
+    for (const [key, val] of session.entries()) {
+      if (normalizeToolId(key) === norm) return val;
+    }
+    return undefined;
+  }
+
+  private touch(sessionID: string): void {
+    const s = this.history.get(sessionID);
+    if (s) {
+      this.history.delete(sessionID);
+      this.history.set(sessionID, s);
+    }
+  }
+
+  hasDelivered(sessionID: string, canonicalID: string): boolean {
+    this.touch(sessionID);
+    const session = this.history.get(sessionID);
+    if (!session) return false;
+    return this.getDeliveredFingerprint(session, canonicalID) !== undefined;
+  }
+
   /** Check if (id, fingerprint) pair is new for this session. */
   isNewDiscovery(sessionID: string, canonicalID: string, fingerprint: string): boolean {
+    this.touch(sessionID);
     const session = this.history.get(sessionID);
     if (!session) return true;
-    let existing = session.get(canonicalID);
-    if (!existing) {
-      const norm = normalizeToolId(canonicalID);
-      for (const [key, val] of session.entries()) {
-        if (normalizeToolId(key) === norm) {
-          existing = val;
-          break;
-        }
-      }
-    }
+    const existing = this.getDeliveredFingerprint(session, canonicalID);
     if (!existing) return true;
     return existing !== fingerprint;
   }
@@ -276,11 +298,20 @@ export class DeliveryHistory {
   /** Record that a tool was delivered to the session (rule 34). */
   recordDelivered(sessionID: string, canonicalID: string, fingerprint: string): void {
     let session = this.history.get(sessionID);
-    if (!session) {
+    if (session) {
+      this.history.delete(sessionID);
+    } else {
       session = new Map();
-      this.history.set(sessionID, session);
     }
     session.set(canonicalID, fingerprint);
+    this.history.set(sessionID, session);
+
+    while (this.history.size > this.maxSessions) {
+      const oldest = this.history.keys().next().value;
+      if (!oldest) break;
+      this.history.delete(oldest);
+    }
+
     this.persistence.save(this.history);
   }
 

@@ -4,8 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { plugin } from '../src/plugin.js';
 import { ToolVault } from '../src/catalog/vault.js';
-import { AuthPersistence } from '../src/engine/auth-persistence.js';
-import type { PersistedToolAuthorization } from '../src/engine/auth-persistence.js';
+import { DeliveryHistoryPersistence } from '../src/engine/delivery-history.js';
 
 const ToolSearchPlugin = plugin.server;
 
@@ -166,7 +165,7 @@ describe('ToolSearchPlugin', () => {
       await hooks['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
       await expect(
         hooks['tool.execute.before']!({ tool: 'foo_ide', sessionID: 'legacy-json-session' } as any, {} as any)
-      ).rejects.toThrow('[Tool Search Required]');
+      ).resolves.not.toThrow();
     } finally {
       if (previousCache === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = previousCache;
@@ -203,17 +202,16 @@ describe('ToolSearchPlugin', () => {
     }
   });
 
-  it('preserves real _ide canonical authorization across plugin restart', async () => {
-    const authorizations = new Map<string, Set<PersistedToolAuthorization>>();
-    const lastSeen = new Map<string, number>();
-    const loadSpy = vi.spyOn(AuthPersistence.prototype, 'load').mockReturnValue({ authorizations, lastSeen });
-    const saveSpy = vi.spyOn(AuthPersistence.prototype, 'save').mockImplementation(() => {});
+  it('preserves real _ide canonical discovery across plugin restart', async () => {
+    const history = new Map<string, Map<string, string>>();
+    const loadSpy = vi.spyOn(DeliveryHistoryPersistence.prototype, 'load').mockReturnValue(history);
+    const saveSpy = vi.spyOn(DeliveryHistoryPersistence.prototype, 'save').mockImplementation(() => {});
 
     const first = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await first['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
     await first['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
     await (first.tool as any).tool_search_regex.execute({ pattern: '^foo_ide$' }, { sessionID: 'restart-session' });
-    expect(Array.from(authorizations.get('restart-session') ?? []).some((entry: any) => entry && typeof entry === 'object' && entry.kind === 'canonical-tool' && entry.version === 1 && entry.canonicalId === 'foo_ide')).toBe(true);
+    expect(history.get('restart-session')?.has('foo_ide')).toBe(true);
 
     const second = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await second['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
@@ -223,20 +221,6 @@ describe('ToolSearchPlugin', () => {
     expect(output.output).toBe('Real result');
     expect(loadSpy).toHaveBeenCalledTimes(2);
     expect(saveSpy).toHaveBeenCalled();
-  });
-
-  it('migrates legacy synthesized _ide authorization to a real canonical tool', async () => {
-    const authorizations = new Map<string, Set<PersistedToolAuthorization>>([['legacy-session', new Set<PersistedToolAuthorization>(['foo_ide'])]]);
-    const lastSeen = new Map<string, number>();
-    vi.spyOn(AuthPersistence.prototype, 'load').mockReturnValue({ authorizations, lastSeen });
-    vi.spyOn(AuthPersistence.prototype, 'save').mockImplementation(() => {});
-
-    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
-    await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
-    await hooks['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
-    await expect(
-      hooks['tool.execute.before']!({ tool: 'foo_ide', sessionID: 'legacy-session' } as any, {} as any)
-    ).resolves.not.toThrow();
   });
 
   it('documents precise canonical tool policy guidance with batch regex alternation', async () => {
@@ -253,13 +237,17 @@ describe('ToolSearchPlugin', () => {
     expect(text).toContain('^(toolA|toolB|toolC)$');
   });
 
-  it('rejects unsearched deferred tools with strict tool_search_regex prescription without or tool_search dilution', async () => {
+  it('allows unsearched deferred tool execution and prescribes strict tool_search_regex in reactive failure hint', async () => {
     const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'unsearched_tool' }, { description: 'Deferred unsearched tool', parameters: {} });
     await expect(
       hooks['tool.execute.before']!({ tool: 'unsearched_tool', sessionID: 'strict-error-session' } as any, {} as any)
-    ).rejects.toThrow(
-      '[Tool Search Required] Tool "unsearched_tool" has not been searched in session "strict-error-session". Call tool_search_regex({ pattern: "^unsearched_tool$" }) to retrieve the full description and authorize this tool.'
+    ).resolves.not.toThrow();
+
+    const failedOutput = { error: new Error('Missing parameter') };
+    await hooks['tool.execute.after']!({ tool: 'unsearched_tool', sessionID: 'strict-error-session' } as any, failedOutput as any);
+    expect((failedOutput as any).output).toContain(
+      '[Tool Hint]: Execution failed for "unsearched_tool". To inspect detailed usage guidelines and documentation, call tool_search_regex({ pattern: "^unsearched_tool$" }).'
     );
   });
 
@@ -271,7 +259,7 @@ describe('ToolSearchPlugin', () => {
     await hooks['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
     await expect(
       hooks['tool.execute.before']!({ tool: 'foo_ide', sessionID: 'collision-session' } as any, {} as any)
-    ).rejects.toThrow('[Tool Search Required]');
+    ).resolves.not.toThrow();
   });
 
   describe('skill tool authorization', () => {
@@ -294,10 +282,10 @@ describe('ToolSearchPlugin', () => {
       await hooks['tool.execute.after']!({ tool: 'skill', sessionID, callID: 'c1' } as any, out1 as any);
       expect(out1.output).toBe('Skill result 1');
 
-      // 3. Intervening unauthorized tool execution should throw [Tool Search Required]
+      // 3. Intervening unsearched tool execution is ungated per ADR 0003
       await expect(
         hooks['tool.execute.before']!({ tool: 'ordinary_tool', sessionID } as any, {} as any)
-      ).rejects.toThrow('[Tool Search Required]');
+      ).resolves.not.toThrow();
 
       // 4. Second execution of skill in same session should STILL be authorized
       await expect(
@@ -308,16 +296,18 @@ describe('ToolSearchPlugin', () => {
       expect(out2.output).toBe('Skill result 2');
 
       // 5. Authorization resets on compress
-      await hooks['tool.execute.after']!({ tool: 'compress', sessionID, callID: 'c4' } as any, { output: 'compressed' } as any);
+      const compressOut = { output: 'compressed' };
+      await hooks['tool.execute.after']!({ tool: 'compress', sessionID, callID: 'c4' } as any, compressOut as any);
+      expect(compressOut.output).toBe('compressed');
 
-      // 6. After compress reset, skill requires search again
+      // 6. After compress reset, skill execution remains ungated per ADR 0003
       await expect(
         hooks['tool.execute.before']!({ tool: 'skill', sessionID } as any, {} as any)
-      ).rejects.toThrow('[Tool Search Required]');
+      ).resolves.not.toThrow();
     });
   });
 
-  it('blocks unauthorized deferred tool execution and resolves after authorization', async () => {
+  it('allows unsearched deferred tool execution and resolves after authorization', async () => {
     const hooks = await ToolSearchPlugin({} as any);
 
     await hooks['tool.definition']!(
@@ -325,10 +315,10 @@ describe('ToolSearchPlugin', () => {
       { description: 'My deferred tool', parameters: {} },
     );
 
-    // Unauthorized deferred tool execution throws [Tool Search Required]
+    // Unsearched deferred tool execution resolves without throwing per ADR 0003
     await expect(
       hooks['tool.execute.before']!({ tool: 'my_deferred_tool', sessionID: 'sess1' } as any, {} as any)
-    ).rejects.toThrow('[Tool Search Required]');
+    ).resolves.not.toThrow();
 
     // Authorized tool resolves without throwing
     const searchTool = (hooks.tool as any).tool_search_regex;
@@ -358,9 +348,10 @@ describe('ToolSearchPlugin', () => {
     await hooks['tool.execute.after']!({ tool: 'tool_a', sessionID: 'sibling-session', callID: 'a' } as any, toolAOutput as any);
     expect(toolAOutput.output).toBe('A result');
 
+    // In Option 2+, execution is ungated per ADR 0003
     await expect(
       hooks['tool.execute.before']!({ tool: 'tool_b', sessionID: 'sibling-session' } as any, {} as any)
-    ).rejects.toThrow('[Tool Search Required]');
+    ).resolves.not.toThrow();
   });
 
   describe('configurable resetTools', () => {
@@ -384,11 +375,11 @@ describe('ToolSearchPlugin', () => {
 
       const compressOut = { output: 'Compaction finished' };
       await hooks['tool.execute.after']!({ tool: 'compress', sessionID: 'sess_default_a', callID: 'c2' } as any, compressOut as any);
-      expect(compressOut.output).toBe('Compaction finished\n\n[Tool Search] Deferred tool authorizations have been reset — search for any tools you need to use.');
+      expect(compressOut.output).toBe('Compaction finished');
 
       await expect(
         hooks['tool.execute.before']!({ tool: 'git_commit', sessionID: 'sess_default_a' } as any, {} as any)
-      ).rejects.toThrow('[Tool Search Required]');
+      ).resolves.not.toThrow();
     });
 
     it('resets session authorizations for custom resetTools while maintaining additive semantics and session isolation', async () => {
@@ -412,11 +403,11 @@ describe('ToolSearchPlugin', () => {
 
       const customResetOut = { output: 'Custom compaction done' };
       await hooks['tool.execute.after']!({ tool: 'custom_compaction', sessionID: 'sess_custom_a', callID: 'c1' } as any, customResetOut as any);
-      expect(customResetOut.output).toBe('Custom compaction done\n\n[Tool Search] Deferred tool authorizations have been reset — search for any tools you need to use.');
+      expect(customResetOut.output).toBe('Custom compaction done');
 
       await expect(
         hooks['tool.execute.before']!({ tool: 'git_commit', sessionID: 'sess_custom_a' } as any, {} as any)
-      ).rejects.toThrow('[Tool Search Required]');
+      ).resolves.not.toThrow();
 
       await expect(
         hooks['tool.execute.before']!({ tool: 'git_commit', sessionID: 'sess_custom_b' } as any, {} as any)
@@ -427,11 +418,11 @@ describe('ToolSearchPlugin', () => {
 
       const compressOutB = { output: 'Compressed session B' };
       await hooks['tool.execute.after']!({ tool: 'compress', sessionID: 'sess_custom_b', callID: 'c4' } as any, compressOutB as any);
-      expect(compressOutB.output).toBe('Compressed session B\n\n[Tool Search] Deferred tool authorizations have been reset — search for any tools you need to use.');
+      expect(compressOutB.output).toBe('Compressed session B');
 
       await expect(
         hooks['tool.execute.before']!({ tool: 'git_commit', sessionID: 'sess_custom_b' } as any, {} as any)
-      ).rejects.toThrow('[Tool Search Required]');
+      ).resolves.not.toThrow();
     });
 
     it('does not reset authorizations when a non-reset tool executes', async () => {
@@ -496,7 +487,7 @@ describe('ToolSearchPlugin', () => {
 
     await expect(
       hooks['tool.execute.before']!({ tool: 'read_ide', sessionID } as any, {} as any)
-    ).rejects.toThrow('[Tool Search Required]');
+    ).resolves.not.toThrow();
   });
 
   it('real _ide canonical tool is not confused with cloaked alias', async () => {
@@ -515,7 +506,7 @@ describe('ToolSearchPlugin', () => {
 
     await expect(
       hooks['tool.execute.before']!({ tool: 'foo', sessionID } as any, {} as any)
-    ).rejects.toThrow('[Tool Search Required]');
+    ).resolves.not.toThrow();
   });
 
   it('F2 regression: foo_ide is not falsely exempted when foo is alwaysOn', async () => {
@@ -530,7 +521,7 @@ describe('ToolSearchPlugin', () => {
 
     await expect(
       hooks['tool.execute.before']!({ tool: 'foo_ide', sessionID } as any, {} as any)
-    ).rejects.toThrow('[Tool Search Required]');
+    ).resolves.not.toThrow();
 
     const regexTool = (hooks.tool as any).tool_search_regex;
     await regexTool.execute({ pattern: '^foo_ide$' }, { sessionID });
@@ -540,7 +531,7 @@ describe('ToolSearchPlugin', () => {
     ).resolves.not.toThrow();
   });
 
-  it('blocks malformed/double-cloaked ID bash_ide_ide when base tool bash is deferred and unauthorized', async () => {
+  it('allows execution for malformed/double-cloaked ID bash_ide_ide without throwing', async () => {
     const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await hooks['tool.definition']!({ toolID: 'bash' }, { description: 'Execute bash command', parameters: {} });
 
@@ -548,7 +539,7 @@ describe('ToolSearchPlugin', () => {
 
     await expect(
       hooks['tool.execute.before']!({ tool: 'bash_ide_ide', sessionID } as any, {} as any)
-    ).rejects.toThrow('[Tool Search Required]');
+    ).resolves.not.toThrow();
 
     const regexTool = (hooks.tool as any).tool_search_regex;
     await regexTool.execute({ pattern: '^bash$' }, { sessionID });
@@ -571,10 +562,10 @@ describe('ToolSearchPlugin', () => {
 
     await expect(
       hooks['tool.execute.before']!({ tool: 'read', sessionID } as any, {} as any)
-    ).rejects.toThrow('[Tool Search Required]');
+    ).resolves.not.toThrow();
     await expect(
       hooks['tool.execute.before']!({ tool: 'write', sessionID } as any, {} as any)
-    ).rejects.toThrow('[Tool Search Required]');
+    ).resolves.not.toThrow();
   });
 
   // Delivery history and no-op discovery tests
@@ -746,7 +737,7 @@ describe('ToolSearchPlugin', () => {
 
     await expect(
       hooks['tool.execute.before']!({ tool: 'tool_a', sessionID } as any, {} as any)
-    ).rejects.toThrow();
+    ).resolves.not.toThrow();
 
     const secondResult = await searchTool.execute({ pattern: '^tool_' }, { sessionID });
     expect(secondResult).toContain('Found 2 tool(s)');
@@ -813,7 +804,7 @@ describe('ToolSearchPlugin', () => {
 
     await expect(
       hooks['tool.execute.before']!({ tool: 'other_tool', sessionID } as any, {} as any)
-    ).rejects.toThrow('[Tool Search Required]');
+    ).resolves.not.toThrow();
   });
 
   it('handles session.deleted event and other event types', async () => {

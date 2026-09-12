@@ -125,7 +125,7 @@ describe('OpenCode 2.0 setupV2', () => {
     expect(typeof regexTool.execute).toBe('function');
   });
 
-  it('enforces authorization on execute.before and supports search tool bypass', async () => {
+  it('allows ungated execution on execute.before and supports search tool bypass', async () => {
     const { ctx, transformCallbacks, toolHooks, sessionHooks } = createMockV2Context();
     await setupV2(ctx, {});
 
@@ -162,10 +162,8 @@ describe('OpenCode 2.0 setupV2', () => {
     await expect(beforeHook({ tool: 'tool_search', sessionID: 'ses-1' })).resolves.toBeUndefined();
     await expect(beforeHook({ tool: 'tool_search_regex', sessionID: 'ses-1' })).resolves.toBeUndefined();
 
-    // execute.before for unauthorized git_diff throws
-    await expect(beforeHook({ tool: 'git_diff', sessionID: 'ses-1' })).rejects.toThrow(
-      /\[Tool Search Required\] Tool "git_diff" has not been searched in session "ses-1"/,
-    );
+    // execute.before for unsearched git_diff succeeds per ADR 0003 (stateless advisory)
+    await expect(beforeHook({ tool: 'git_diff', sessionID: 'ses-1' })).resolves.toBeUndefined();
 
     // Authorize git_diff via tool_search_regex
     const searchRes = await addedTools.tool_search_regex.execute(
@@ -216,17 +214,13 @@ describe('OpenCode 2.0 setupV2', () => {
     await afterHook({ tool: 'file_read', sessionID: 'ses-2' }, normalOutput);
     expect(normalOutput.output).toBe('Read completed');
 
-    // Execute reset tool (compress) in after hook: appends notice
+    // Execute reset tool (compress) in after hook: output remains clean (no banner pollution)
     const compressOutput = { output: 'Context compressed' };
     await afterHook({ tool: 'compress', sessionID: 'ses-2' }, compressOutput);
-    expect(compressOutput.output).toBe(
-      'Context compressed\n\n[Tool Search] Deferred tool authorizations have been reset — search for any tools you need to use.',
-    );
+    expect(compressOutput.output).toBe('Context compressed');
 
-    // file_read is now blocked again until re-searched
-    await expect(beforeHook({ tool: 'file_read', sessionID: 'ses-2' })).rejects.toThrow(
-      /\[Tool Search Required\] Tool "file_read" has not been searched in session "ses-2"/,
-    );
+    // In Option 2+, execution is ungated so file_read does not throw
+    await expect(beforeHook({ tool: 'file_read', sessionID: 'ses-2' })).resolves.toBeUndefined();
   });
 
   it('defers tools, injects system prompt, restores full schema on authorization, and prevents stacking [deferred] tags', async () => {
@@ -282,9 +276,11 @@ describe('OpenCode 2.0 setupV2', () => {
     // Authorize bash via tool_search_regex
     await addedTools.tool_search_regex.execute({ pattern: '^bash$' }, { sessionID: 'ses-3' });
 
-    // Third context turn after authorization: full description and input restored
+    // Third context turn after authorization: description remains truncated per ADR 0003
+    // token virtualization — full docs delivered via the search response message channel;
+    // the input schema stays intact in the tools array.
     await sessionHooks['context'][0](sessionCtx);
-    expect(sessionCtx.tools.bash.description).toBe('Run arbitrary bash commands on host. Use with caution.');
+    expect(sessionCtx.tools.bash.description).toBe('Run arbitrary bash commands on host. [deferred]');
     expect(sessionCtx.tools.bash.input).toEqual({
       type: 'object',
       properties: {
@@ -330,10 +326,8 @@ describe('OpenCode 2.0 setupV2', () => {
       properties: { sessionID: 'ses-delete-me' },
     });
 
-    // Now search_files should be blocked again
-    await expect(beforeHook({ tool: 'search_files', sessionID: 'ses-delete-me' })).rejects.toThrow(
-      /\[Tool Search Required\] Tool "search_files" has not been searched in session "ses-delete-me"/,
-    );
+    // Now search_files execution remains ungated per ADR 0003
+    await expect(beforeHook({ tool: 'search_files', sessionID: 'ses-delete-me' })).resolves.toBeUndefined();
   });
 
   it('supports MCP configuration in opts.mcp, registers tools in transform and dynamic updates', async () => {
@@ -578,9 +572,9 @@ describe('OpenCode 2.0 setupV2', () => {
       properties: { sessionID },
     });
 
-    // 4. Assert tool authorization has been reset — calls now throw [Tool Search Required]
+    // 4. Assert tool execution remains ungated per ADR 0003
     await expect(
       toolHooks['execute.before'][0]({ tool: 'git_status', sessionID }),
-    ).rejects.toThrow(/\[Tool Search Required\]/);
+    ).resolves.toBeUndefined();
   });
 });

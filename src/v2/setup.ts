@@ -74,16 +74,7 @@ export async function setupV2(ctx: any, options?: Record<string, unknown>): Prom
   ctx.tool?.hook?.('execute.after', async (input: any, output: any) => {
     try {
       if (!input || !output) return;
-      const notice = runtime.handleToolExecuted(input.tool, input.sessionID);
-      if (notice) {
-        if (typeof output.content === 'string') {
-          output.content += notice;
-        } else if (output.output !== undefined) {
-          output.output = `${String(output.output ?? '')}${notice}`;
-        } else {
-          output.output = notice;
-        }
-      }
+      runtime.enrichToolExecutionOutput(input.tool, input.sessionID, output);
     } catch {
       // silently ignore
     }

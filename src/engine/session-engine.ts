@@ -10,6 +10,8 @@ export const DEFAULT_DEFER = '[deferred]';
 const MAX_REGEX_PATTERN_LENGTH = 200;
 const SEARCH_TIMEOUT_MS = 2000;
 const MAX_QUERY_LENGTH = 500;
+/** Cap on tracked session tool manifests: prevents unbounded growth when session lifecycle events are missed. */
+const MAX_TRACKED_SESSIONS = 256;
 
 export const TOOL_SEARCH_PARAM_DESC =
   'Semantic capability or task description (e.g. "search code AST", "fetch web page").';
@@ -37,7 +39,8 @@ export function buildToolSearchDescription(deferLabel: string): string {
 Call tool_search({ query: "<task description>" }).
 WHEN TO USE: you need a capability but do not know which tool provides it (e.g. "search git commit history", "inspect AST"), or discovering relevant tools for a broad task.
 WHEN NOT TO USE:
-- You already know the exact tool ID(s) (e.g. "skill", "read", "bash") — use tool_search_regex({ pattern: "^tool_name$" }) instead.
+- You already know how to invoke the tool and understand its parameters — invoke it directly without searching.
+- You already know the exact tool ID(s) (e.g. "skill", "read", "bash") and need documentation — use tool_search_regex({ pattern: "^tool_name$" }) instead.
 - DO NOT pass space-separated lists of multiple tool names — use tool_search_regex with alternation instead.
 - You already searched this tool in the current active context and know its canonical ID — call it directly instead.`;
 }
@@ -49,10 +52,12 @@ export function buildToolSearchRegexDescription(_deferLabel?: string): string {
   return `Retrieve full descriptions for known tool ID(s) or pattern matching using regex. Returns matching tool IDs and descriptions (parameter schemas are always present in the tools array).
 Call tool_search_regex({ pattern: "<regex>" }).
 WHEN TO USE:
-- You know the exact tool ID (e.g. tool_search_regex({ pattern: "^skill$" })).
-- You want to unlock MULTIPLE known tools at once via regex alternation (e.g. tool_search_regex({ pattern: "^(read|write|edit|glob|grep|bash|skill)$" })).
+- You know the exact tool ID and need to inspect its full usage documentation, guidelines, or operational rules (e.g. tool_search_regex({ pattern: "^skill$" })).
+- You want to inspect MULTIPLE known tools at once via regex alternation (e.g. tool_search_regex({ pattern: "^(read|write|edit|glob|grep|bash|skill)$" })).
+- An execution failed and you need to review the tool's detailed parameter requirements and rules.
 - Finding tools matching a specific prefix or pattern (e.g. "^ctx_").
 WHEN NOT TO USE:
+- Standard tools you already know how to invoke (e.g. bash, read, glob, grep) — call them directly; search is NOT required before execution.
 - Semantic/fuzzy searches when tool names are unknown — use tool_search({ query: "<task>" }) instead.
 - You already searched this tool in the current active context and know its canonical ID — call it directly instead.`;
 }
@@ -105,35 +110,6 @@ interface SystemPromptState {
  * surfaced to the model prompt. Exposes the search tools the plugin wires
  * into OpenCode, plus the operations the plugin hooks delegate to.
  */
-/**
- * Expands a Sleev message ID or range (e.g. "m0001-m0005", "m0011", "m4-m8")
- * into normalized set of message identifiers.
- */
-export function expandSleevId(id: string): string[] {
-  const trimmed = id.trim();
-  const rangeMatch = trimmed.match(/^m?(\d+)-m?(\d+)$/i);
-  if (rangeMatch) {
-    const start = parseInt(rangeMatch[1], 10);
-    const end = parseInt(rangeMatch[2], 10);
-    const padLen = rangeMatch[1].length;
-    const result: string[] = [];
-    const min = Math.min(start, end);
-    const max = Math.max(start, end);
-    for (let i = min; i <= max; i++) {
-      result.push('m' + String(i).padStart(padLen, '0'));
-      result.push(String(i));
-      result.push('m' + String(i));
-    }
-    return result;
-  }
-  const singleMatch = trimmed.match(/^m?(\d+)$/i);
-  if (singleMatch) {
-    const num = parseInt(singleMatch[1], 10);
-    return ['m' + String(num).padStart(singleMatch[1].length, '0'), String(num), 'm' + String(num), trimmed];
-  }
-  return [trimmed];
-}
-
 export class SessionEngine {
   public readonly vault: ToolVault;
   public readonly sessionRegistry: SessionToolRegistry;
@@ -143,6 +119,7 @@ export class SessionEngine {
   private readonly maxResults: number;
   private readonly useWorker: boolean;
   private readonly notify?: (title: string, message: string, variant?: 'info' | 'warning' | 'error', duration?: number) => void;
+  private readonly sessionTools = new Map<string, Set<string>>();
   private alerted = false;
 
   public constructor(
@@ -184,23 +161,84 @@ export class SessionEngine {
   }
 
   /**
-   * Resolve the canonical tool ID for an executed (possibly cloaked `_ide`)
-   * tool name, then ask the session registry whether the model must be
-   * reminded to search first. Throws when the tool is not authorized.
+   * Pre-execution authorization check.
+   * Per ADR 0003 (Stateless Advisory Tool Discovery), execution is ungated so this is a no-op.
+   * Deferred tools are never blocked prior to search; reactive hints are provided on failure.
    */
-  public assertAuthorized(executedTool: string, sessionID: string | undefined, canonicalTool: string): void {
-    const sessionKey = sessionID ?? 'default';
-    if (this.sessionRegistry.requiresReminder(sessionID, executedTool, canonicalTool)) {
-      throw new Error(
-        `[Tool Search Required] Tool "${executedTool}" has not been searched in session "${sessionKey}". Call tool_search_regex({ pattern: "^${canonicalTool}$" }) to retrieve the full description and authorize this tool.`,
-      );
-    }
+  public assertAuthorized(_executedTool: string, _sessionID: string | undefined, _canonicalTool: string): void {
+    // No-op per ADR 0003: stateless advisory tool discovery. Execution is ungated.
+    return;
   }
 
-  /** Reset authorizations for a session when a configured reset tool executes. */
-  public handleToolExecuted(toolID: string, sessionID: string | undefined): string | null {
-    if (!this.sessionRegistry.resetIfConfigured(toolID, sessionID)) return null;
-    return `\n\n[Tool Search] Deferred tool authorizations have been reset — search for any tools you need to use.`;
+  public hasSearchTool(sessionID: string | undefined): boolean {
+    if (!sessionID) return true;
+    if (this.sessionTools.has(sessionID)) {
+      const tools = this.sessionTools.get(sessionID)!;
+      return tools.has('tool_search_regex') || tools.has('tool_search');
+    }
+    return true;
+  }
+
+  public isDeferred(canonicalID: string): boolean {
+    return this.sessionRegistry.isDeferred(canonicalID, this.vault.has(canonicalID));
+  }
+
+  /**
+   * Post-execution hook: resets authorizations and clears delivery history when a configured
+   * reset tool executes, and appends a reactive advisory hint when a deferred tool execution fails.
+   */
+  public handleToolExecuted(
+    toolID: string,
+    sessionID: string | undefined,
+    executionResult?: { error?: unknown; isError?: boolean; status?: unknown; output?: unknown },
+  ): string | null {
+    const isError = Boolean(
+      executionResult?.isError ||
+      executionResult?.error ||
+      executionResult?.status === 'error' ||
+      (typeof executionResult?.output === 'object' && (executionResult.output as any)?.status === 'error')
+    );
+
+    if (!isError) {
+      this.sessionRegistry.resetIfConfigured(toolID, sessionID);
+      return null;
+    }
+
+    if (SEARCH_IDS.has(toolID)) return null;
+
+    const meta = this.vault.resolveAlias(toolID);
+    const canonical = meta?.id ?? toolID;
+    if (!this.isDeferred(canonical)) return null;
+    if (this.sessionRegistry.isDelivered(sessionID, canonical)) return null;
+
+    if (this.hasSearchTool(sessionID)) {
+      return `\n\n[Tool Hint]: Execution failed for "${toolID}". To inspect detailed usage guidelines and documentation, call tool_search_regex({ pattern: "^${canonical}$" }).`;
+    }
+    return `\n\n[Tool Hint]: Execution failed for "${toolID}". Review parameter types, required fields, and boundary constraints in the tool schema.`;
+  }
+
+  public enrichToolExecutionOutput(
+    toolID: string,
+    sessionID: string | undefined,
+    output: any,
+  ): void {
+    if (!output) return;
+    if (typeof output.content === 'string' && output.content.includes('[Tool Hint]')) return;
+    if (Array.isArray(output.content) && output.content.some((c: any) => typeof c?.text === 'string' && c.text.includes('[Tool Hint]'))) return;
+    if (typeof output.output === 'string' && output.output.includes('[Tool Hint]')) return;
+
+    const notice = this.handleToolExecuted(toolID, sessionID, output);
+    if (!notice) return;
+
+    if (typeof output.content === 'string') {
+      output.content += notice;
+    } else if (Array.isArray(output.content)) {
+      output.content.push({ type: 'text', text: notice });
+    } else if (output.output !== undefined) {
+      output.output = `${String(output.output ?? '')}${notice}`;
+    } else {
+      output.output = notice;
+    }
   }
 
   /**
@@ -237,251 +275,38 @@ export class SessionEngine {
 
     const policyText = deferrals > 0
       ? [
-          `[Tool Search Policy] Tools marked "${this.deferLabel}" are deferred: their full description is not in your context.`,
-          '1. Retrieve a deferred tool\'s description ONCE per active context via tool_search_regex({ pattern: "^<id>$" }) when the tool ID is known.',
+          `[Tool Search Policy] Tools marked "${this.deferLabel}" are deferred: parameter schemas are complete and directly executable, but full prose descriptions are deferred to save context.`,
+          '1. Direct execution: You may invoke any tool immediately if you already understand its parameters.',
+          '2. Inspect documentation: Retrieve a deferred tool\'s full description and guidelines via tool_search_regex({ pattern: "^<id>$" }) when the tool ID is known, or when an execution fails.',
           '   - To retrieve MULTIPLE known tools at once, use regex alternation: tool_search_regex({ pattern: "^(toolA|toolB|toolC)$" }).',
-          '2. Discover tools by task or capability via tool_search({ query: "<task description>" }) only when the tool ID is unknown.',
+          '3. Discover new tools: Find tools by capability or task intent via tool_search({ query: "<task description>" }) when you do not know the tool name.',
           '   - DO NOT concatenate multiple tool names with spaces into tool_search.',
-          '3. After retrieval, call the tool by its canonical ID. Re-searching an already-known tool returns no new metadata and wastes tokens.',
-          '4. Re-retrieve only after compaction or reset (e.g. after compress), which clears search state.',
-          '5. Do NOT guess parameter schemas or descriptions — a search is required before use.',
-          'Search results are the authoritative source of the canonical tool ID; parameter schemas are always present in the tools array — only descriptions are deferred.',
+          '4. Duplicate suppression: Searching an already-delivered tool returns a concise reference to save context. Full descriptions can be re-retrieved after context compaction or reset (e.g. after compress).',
+          '5. Do NOT search standard tools you already know how to invoke (e.g. bash, read, glob, grep) unless you encounter an error or need specialized operational rules.',
+          'Search results provide the canonical ID; parameter schemas are always present in the tools array — only descriptions are deferred.',
         ].join('\n')
       : '';
 
     return { total, deferrals, policyText, alert };
   }
 
-  private extractMessageText(msg: unknown): string {
-    if (!msg || typeof msg !== 'object') return '';
-    const obj = msg as Record<string, unknown>;
-    let text = '';
-
-    if (typeof obj.content === 'string') {
-      text += obj.content + ' ';
-    } else if (Array.isArray(obj.content)) {
-      for (const item of obj.content) {
-        if (typeof item === 'string') {
-          text += item + ' ';
-        } else if (item && typeof item === 'object') {
-          const itemObj = item as Record<string, unknown>;
-          if (typeof itemObj.text === 'string') text += itemObj.text + ' ';
-          if (typeof itemObj.content === 'string') text += itemObj.content + ' ';
-        }
-      }
-    }
-
-    if (Array.isArray(obj.parts)) {
-      for (const part of obj.parts) {
-        if (typeof part === 'string') {
-          text += part + ' ';
-        } else if (part && typeof part === 'object') {
-          const partObj = part as Record<string, unknown>;
-          if (typeof partObj.text === 'string') text += partObj.text + ' ';
-          if (typeof partObj.content === 'string') text += partObj.content + ' ';
-          if (typeof partObj.output === 'string') text += partObj.output + ' ';
-          const state = partObj.state as Record<string, unknown> | undefined;
-          if (state && typeof state === 'object') {
-            if (typeof state.output === 'string') text += state.output + ' ';
-            if (typeof state.text === 'string') text += state.text + ' ';
-          }
-        }
-      }
-    }
-
-    if (Array.isArray(obj.blocks)) {
-      for (const block of obj.blocks) {
-        if (block && typeof block === 'object') {
-          const blockObj = block as Record<string, unknown>;
-          if (typeof blockObj.text === 'string') text += blockObj.text + ' ';
-          if (typeof blockObj.output === 'string') text += blockObj.output + ' ';
-          if (Array.isArray(blockObj.content)) {
-            for (const c of blockObj.content) {
-              if (c && typeof c === 'object') {
-                const cObj = c as Record<string, unknown>;
-                if (typeof cObj.text === 'string') text += cObj.text + ' ';
-                if (typeof cObj.output === 'string') text += cObj.output + ' ';
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // Strip sleev compressed summaries so compressed text doesn't falsely satisfy active presence
-    text = text.replace(/<sleev-id-compressed>[\s\S]*?<\/sleev-id-compressed>/gi, '');
-
-    return text;
-  }
-
   public compactSession(sessionID: string | undefined): string {
     this.sessionRegistry.compactSession(sessionID);
-    return '[Tool Search] Session compacted. Deferred tool authorizations have been reset — search for any tools you need to use.';
-  }
-
-  /**
-   * Dynamically verify that authorized tools are actually present in the active conversation context.
-   * If a message containing a tool's search result was pruned (by Sleev, compaction, or context trimming),
-   * this selectively revokes authorization for that specific tool so the LLM is prompted to re-search.
-   */
-  public syncActiveAuthorizations(
-    sessionID: string | undefined,
-    messages?: Array<{ role?: string; content?: unknown }>,
-    tools?: Record<string, any>,
-  ): string[] {
-    if (!sessionID || !messages || messages.length === 0) return [];
-
-    const authorized = this.sessionRegistry.getAuthorizedTools(sessionID);
-    if (authorized.length === 0) return [];
-
-    let combinedText = '';
-    for (const msg of messages) {
-      combinedText += this.extractMessageText(msg) + '\n';
-    }
-
-    const revoked: string[] = [];
-    for (const toolID of authorized) {
-      const stillServable = !!tools && typeof tools === 'object' && this.toolStillServable(toolID, tools);
-
-      if (stillServable) continue;
-
-      const escaped = toolID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const presenceRegex = new RegExp(`(?:^|\\W)${escaped}(?::|\\b)`, 'm');
-      if (!presenceRegex.test(combinedText)) {
-        revoked.push(toolID);
-      }
-    }
-
-    if (revoked.length > 0) {
-      this.sessionRegistry.revokeTools(sessionID, revoked);
-    }
-
-    return revoked;
+    return '\n\n[Tool Search] Context compacted — tool search history cleared. You may continue executing tools directly or search for documentation as needed.';
   }
 
   /**
    * ID-Aware Sleev Compression Sync:
-   * Inspects message history for completed `compress` tool calls, gathers all pruned message IDs,
-   * checks which authorized tools were delivered inside those pruned message blocks (<sleev-id-mXXXX>),
-   * and selectively revokes authorizations for tools whose schemas were pruned from active context.
+   * Under ADR 0003 Stateless Advisory Tool Discovery, authorizations are not gated
+   * or speculatively revoked across turns. Compaction resets are owned by lifecycle hooks
+   * and resetTools handling.
    */
   public syncSleevCompression(
-    sessionID: string | undefined,
-    messages?: Array<unknown>,
-    tools?: Record<string, any>,
+    _sessionID: string | undefined,
+    _messages?: Array<unknown>,
+    _tools?: Record<string, any>,
   ): string[] {
-    if (!sessionID || !messages || messages.length === 0) return [];
-
-    const authorized = this.sessionRegistry.getAuthorizedTools(sessionID);
-    if (authorized.length === 0) return [];
-
-    // 1. Collect all pruned message IDs from completed `compress` tool calls
-    const prunedIds = new Set<string>();
-
-    for (const msg of messages) {
-      if (!msg || typeof msg !== 'object') continue;
-      const msgObj = msg as Record<string, unknown>;
-
-      // Check parts array (OpenCode format)
-      if (Array.isArray(msgObj.parts)) {
-        for (const part of msgObj.parts) {
-          if (part && typeof part === 'object') {
-            const p = part as Record<string, unknown>;
-            if (p.type === 'tool' && p.tool === 'compress') {
-              const state = p.state as Record<string, unknown> | undefined;
-              if (state?.status === 'completed' || p.status === 'completed') {
-                const input = (state?.input || p.input) as Record<string, unknown> | undefined;
-                if (Array.isArray(input?.ids)) {
-                  for (const id of input.ids) {
-                    if (typeof id === 'string') {
-                      for (const expanded of expandSleevId(id)) prunedIds.add(expanded);
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // Check tool_calls array (API format)
-      if (Array.isArray(msgObj.tool_calls)) {
-        for (const tc of msgObj.tool_calls) {
-          if (tc && typeof tc === 'object') {
-            const fn = (tc as Record<string, unknown>).function as Record<string, unknown> | undefined;
-            if (fn?.name === 'compress' && typeof fn.arguments === 'string') {
-              try {
-                const parsedArgs = JSON.parse(fn.arguments);
-                if (Array.isArray(parsedArgs.ids)) {
-                  for (const id of parsedArgs.ids) {
-                    if (typeof id === 'string') {
-                      for (const expanded of expandSleevId(id)) prunedIds.add(expanded);
-                    }
-                  }
-                }
-              } catch {
-                // ignore parse error
-              }
-            }
-          }
-        }
-      }
-    }
-
-    if (prunedIds.size === 0) {
-      return this.syncActiveAuthorizations(sessionID, messages as any, tools);
-    }
-
-    // 2. Identify unpruned message text
-    let activeText = '';
-    for (const msg of messages) {
-      const fullText = this.extractMessageText(msg);
-      // Check if this text chunk is wrapped with a sleev message ID
-      const tagMatch = fullText.match(/<sleev-id-(m\d+)>/i);
-      if (tagMatch) {
-        const msgId = tagMatch[1];
-        if (prunedIds.has(msgId) || prunedIds.has('m' + msgId)) {
-          // This message has been pruned by Sleev, skip it
-          continue;
-        }
-      }
-      activeText += fullText + '\n';
-    }
-
-    // 3. For each authorized tool, check presence in durable channel first (tools array),
-    //    then fall back to active message text.
-    const revoked: string[] = [];
-    for (const toolID of authorized) {
-      const stillServable = !!tools && typeof tools === 'object' && this.toolStillServable(toolID, tools);
-
-      if (stillServable) continue;
-
-      const escaped = toolID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const presenceRegex = new RegExp(`(?:^|\\W)${escaped}(?::|\\b)`, 'm');
-      if (!presenceRegex.test(activeText)) {
-        revoked.push(toolID);
-      }
-    }
-
-    if (revoked.length > 0) {
-      this.sessionRegistry.revokeTools(sessionID, revoked);
-    }
-
-    return revoked;
-  }
-
-  /**
-   * True when the tool's key still exists in the durable per-turn tools payload.
-   * The tools array survives Sleev compaction (verified: 47/47 request pairs
-   * keep the first 320 tool entries byte-identical); the message channel does not.
-   * An authorized tool still served in tools must NOT be revoked merely because
-   * the conversation message that first announced it was pruned.
-   */
-  private toolStillServable(toolID: string, tools: Record<string, any>): boolean {
-    if (!tools || typeof tools !== 'object') return false;
-    const direct = tools[toolID];
-    if (direct && typeof direct === 'object') return true;
-    return Object.keys(tools).some((key) => key.endsWith(toolID));
+    return [];
   }
 
   public applyContextTurn(sessionCtx: {
@@ -492,6 +317,15 @@ export class SessionEngine {
   }): void {
     if (!sessionCtx) return;
 
+    if (sessionCtx.sessionID && sessionCtx.tools && typeof sessionCtx.tools === 'object') {
+      this.sessionTools.set(sessionCtx.sessionID, new Set(Object.keys(sessionCtx.tools)));
+      while (this.sessionTools.size > MAX_TRACKED_SESSIONS) {
+        const oldest = this.sessionTools.keys().next().value;
+        if (oldest === undefined) break;
+        this.sessionTools.delete(oldest);
+      }
+    }
+
     this.syncSleevCompression(sessionCtx.sessionID, sessionCtx.messages, sessionCtx.tools);
 
     if (sessionCtx.tools && typeof sessionCtx.tools === 'object') {
@@ -500,16 +334,8 @@ export class SessionEngine {
         const normalizedInput = normalizeParameters(toolDef.input, toolDef.jsonSchema);
         this.vault.add(toolName, toolDef.description, normalizedInput);
         if (this.sessionRegistry.registerTool(toolName)) {
-          if (!this.sessionRegistry.isAuthorized(sessionCtx.sessionID, toolName)) {
-            const pristineDesc = this.vault.get(toolName)?.description ?? toolDef.description;
-            toolDef.description = truncateDescription(pristineDesc, this.deferLabel);
-          } else {
-            const stored = this.vault.get(toolName);
-            if (stored) {
-              toolDef.description = stored.description;
-              toolDef.input = stored.parameters;
-            }
-          }
+          const pristineDesc = this.vault.get(toolName)?.description ?? toolDef.description;
+          toolDef.description = truncateDescription(pristineDesc, this.deferLabel);
         }
       }
     }
@@ -536,9 +362,10 @@ export class SessionEngine {
     const evt = event?.event ?? event;
     if (!evt || typeof evt !== 'object') return;
     if (evt.type === 'session.deleted') {
-      const sessionID = (evt.properties as { sessionID?: unknown } | undefined)?.sessionID;
+      const sessionID = (evt.properties as any)?.sessionID ?? (evt.properties as any)?.id ?? (evt as any)?.sessionID;
       if (typeof sessionID === 'string' && sessionID.length > 0) {
         this.deleteSession(sessionID);
+        this.sessionTools.delete(sessionID);
       }
     } else if (evt.type === 'session.compacted' || evt.type === 'session.compaction') {
       const sessionID = (evt.properties as { sessionID?: unknown } | undefined)?.sessionID ?? (evt as { sessionID?: unknown })?.sessionID;

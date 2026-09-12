@@ -1,19 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, readFileSync, writeFileSync, rmSync, mkdtempSync } from 'fs';
+import { existsSync, writeFileSync, rmSync, mkdtempSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import {
-  AuthPersistence,
-  getDefaultAuthStoragePath,
-  type PersistedToolAuthorization,
-} from '../src/engine/auth-persistence.js';
-import { AuthorizationState } from '../src/engine/authorization-state.js';
 import { SessionToolRegistry } from '../src/engine/session-tool-registry.js';
 import {
   SessionEngine,
   TOOL_SEARCH_PARAM_DESC,
   TOOL_SEARCH_REGEX_PARAM_DESC,
-  expandSleevId,
 } from '../src/engine/session-engine.js';
 import {
   DeliveryHistory,
@@ -32,225 +25,6 @@ import { UpdateCheckLifecycle } from '../src/hooks/update-check.js';
 import { resolveStorageDir, safeReadJson, safeWriteJson } from '../src/utils/storage-path.js';
 import { configureTransformersEnv } from '../src/catalog/transformers-env.js';
 import type { ToolMeta } from '../src/types.js';
-
-// ============================================================================
-// AuthorizationState & AuthPersistence
-// ============================================================================
-
-describe('AuthorizationState & AuthPersistence', () => {
-  let testDir: string;
-  let testFilePath: string;
-
-  beforeEach(() => {
-    testDir = mkdtempSync(join(tmpdir(), 'tool-search-auth-test-'));
-    testFilePath = join(testDir, 'authorizations.json');
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    if (existsSync(testDir)) {
-      rmSync(testDir, { recursive: true, force: true });
-    }
-  });
-
-  it('getDefaultAuthStoragePath returns path under user cache / APPDATA', () => {
-    const path = getDefaultAuthStoragePath();
-    expect(path).toContain('tool-search');
-    expect(path).toContain('authorizations.json');
-  });
-
-  it('loads mixed legacy and strictly valid structured tools while dropping malformed records', () => {
-    const validStructured = { kind: 'canonical-tool', version: 1, canonicalId: 'foo_ide' };
-    const initialData = {
-      'mixed-session': {
-        tools: [
-          'ordinary_tool',
-          validStructured,
-          { kind: 'canonical-tool', version: 1, canonicalId: 'extra', extra: true },
-          { kind: 'wrong-kind', version: 1, canonicalId: 'wrong' },
-          { kind: 'canonical-tool', version: 2, canonicalId: 'wrong-version' },
-          { kind: 'canonical-tool', version: 1, canonicalId: '' },
-          { kind: 'canonical-tool', version: 1 },
-          [],
-          { kind: 'canonical-tool', version: 1, canonicalId: 42 },
-        ],
-      },
-    };
-    writeFileSync(testFilePath, JSON.stringify(initialData), 'utf-8');
-
-    const { authorizations } = new AuthPersistence({ filePath: testFilePath }).load();
-    expect(Array.from(authorizations.get('mixed-session')!)).toEqual(['ordinary_tool', validStructured]);
-  });
-
-  it('expires sessions older than 30 days during load', () => {
-    const now = Date.now();
-    const initialData = {
-      'old-session': {
-        tools: ['toolA', 'toolB'],
-        lastSeen: now - 31 * 24 * 60 * 60 * 1000,
-      },
-      'active-session': {
-        tools: ['toolC'],
-        lastSeen: now - 10 * 24 * 60 * 60 * 1000,
-      },
-    };
-    writeFileSync(testFilePath, JSON.stringify(initialData), 'utf-8');
-
-    const ap = new AuthPersistence({ filePath: testFilePath });
-    const { authorizations } = ap.load();
-
-    expect(authorizations.has('old-session')).toBe(false);
-    expect(authorizations.has('active-session')).toBe(true);
-    expect(Array.from(authorizations.get('active-session')!)).toEqual(['toolC']);
-  });
-
-  it('handles invalid JSON gracefully (fail-open)', () => {
-    writeFileSync(testFilePath, 'NOT_VALID_JSON{', 'utf-8');
-    const ap = new AuthPersistence({ filePath: testFilePath });
-    const { authorizations, lastSeen } = ap.load();
-
-    expect(authorizations.size).toBe(0);
-    expect(lastSeen.size).toBe(0);
-  });
-
-  it('flushes pending state to disk with atomic write', async () => {
-    const ap = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
-    const auths = new Map<string, Set<PersistedToolAuthorization>>([
-      ['s1', new Set(['git_commit', 'read_file'])],
-    ]);
-    const now = Date.now();
-    const lastSeen = new Map<string, number>([['s1', now]]);
-
-    ap.save(auths, lastSeen);
-    await ap.flush();
-
-    expect(existsSync(testFilePath)).toBe(true);
-    const content = JSON.parse(readFileSync(testFilePath, 'utf-8'));
-    expect(content).toEqual({
-      s1: {
-        tools: ['git_commit', 'read_file'],
-        lastSeen: now,
-      },
-    });
-  });
-
-  it('merges sessions from multiple processes writing to the same file without data loss', async () => {
-    const ap1 = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
-    const ap2 = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
-    const tA = Date.now() - 1000;
-    const tB = Date.now();
-
-    ap1.save(new Map([['sessionA', new Set(['toolA'])]]), new Map([['sessionA', tA]]));
-    await ap1.flush();
-
-    ap2.save(new Map([['sessionB', new Set(['toolB'])]]), new Map([['sessionB', tB]]));
-    await ap2.flush();
-
-    expect(existsSync(testFilePath)).toBe(true);
-    const content = JSON.parse(readFileSync(testFilePath, 'utf-8'));
-    expect(content).toEqual({
-      sessionA: { tools: ['toolA'], lastSeen: tA },
-      sessionB: { tools: ['toolB'], lastSeen: tB },
-    });
-  });
-
-  it('AuthorizationState tracks authorizations and requires reminders', () => {
-    const persistence = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
-    const state = new AuthorizationState({
-      alwaysOn: ['always_tool'],
-      resetTools: ['compress'],
-      persistence,
-    });
-
-    state.registerTool('tool_a');
-
-    expect(state.isAuthorized('sess-1', 'tool_a')).toBe(false);
-    expect(state.requiresReminder('sess-1', 'tool_a', 'tool_a')).toBe(true);
-
-    state.authorize('sess-1', [{ id: 'tool_a', description: 'Tool A', parameters: {} }]);
-    expect(state.isAuthorized('sess-1', 'tool_a')).toBe(true);
-    expect(state.requiresReminder('sess-1', 'tool_a', 'tool_a')).toBe(false);
-
-    state.resetSession('sess-1');
-    expect(state.isAuthorized('sess-1', 'tool_a')).toBe(false);
-  });
-
-  it('handles hyphens and underscores interchangeably for authorization and reminders', () => {
-    const persistence = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
-    const state = new AuthorizationState({
-      alwaysOn: ['always-on_tool'],
-      resetTools: ['compress'],
-      persistence,
-    });
-
-    state.registerTool('codebase-memory_list_projects');
-
-    // Always-on check works across hyphens and underscores
-    expect(state.requiresReminder('sess-1', 'always_on_tool', 'always-on_tool')).toBe(false);
-
-    // Initial state: not authorized
-    expect(state.isAuthorized('sess-1', 'codebase_memory_list_projects')).toBe(false);
-    expect(state.isAuthorized('sess-1', 'codebase-memory_list_projects')).toBe(false);
-    expect(state.requiresReminder('sess-1', 'codebase_memory_list_projects', 'codebase-memory_list_projects')).toBe(true);
-
-    // Authorize using the catalog ID (with hyphen)
-    state.authorize('sess-1', [{ id: 'codebase-memory_list_projects', description: 'List projects', parameters: {} }]);
-
-    // Both snake_case and kebab-case are recognized as authorized
-    expect(state.isAuthorized('sess-1', 'codebase_memory_list_projects')).toBe(true);
-    expect(state.isAuthorized('sess-1', 'codebase-memory_list_projects')).toBe(true);
-    expect(state.requiresReminder('sess-1', 'codebase_memory_list_projects', 'codebase-memory_list_projects')).toBe(false);
-    expect(state.requiresReminder('sess-1', 'codebase-memory_list_projects', 'codebase-memory_list_projects')).toBe(false);
-
-    // Revoke using snake_case ID revokes the normalized authorization
-    state.revoke('sess-1', ['codebase_memory_list_projects']);
-    expect(state.isAuthorized('sess-1', 'codebase-memory_list_projects')).toBe(false);
-  });
-
-  it('normalizes tool IDs across case, whitespace, and hyphens/underscores in alwaysOn and resetTools', () => {
-    const persistence = new AuthPersistence({ filePath: testFilePath, debounceMs: 10 });
-    const state = new AuthorizationState({
-      alwaysOn: ['  READ  ', 'github-grep_searchGitHub', 'WRITE'],
-      resetTools: ['  COMPRESS  ', 'my-reset_tool'],
-      persistence,
-    });
-
-    // registerTool returns false (not deferred) for normalized alwaysOn matches
-    expect(state.registerTool('read')).toBe(false);
-    expect(state.registerTool('READ')).toBe(false);
-    expect(state.registerTool('write')).toBe(false);
-    expect(state.registerTool('github_grep_searchgithub')).toBe(false);
-    expect(state.registerTool('github-grep_searchGitHub')).toBe(false);
-    expect(state.deferredCount).toBe(0);
-
-    // registerTool returns true (deferred) for other tools
-    expect(state.registerTool('custom_tool')).toBe(true);
-    expect(state.deferredCount).toBe(1);
-
-    // requiresReminder is false for normalized alwaysOn tools
-    expect(state.requiresReminder('sess-1', 'read', 'read')).toBe(false);
-    expect(state.requiresReminder('sess-1', 'READ', 'read')).toBe(false);
-    expect(state.requiresReminder('sess-1', 'github_grep_searchgithub', 'github_grep_searchGitHub')).toBe(false);
-
-    // addAlwaysOn removes previously deferred tool under normalized matching
-    state.addAlwaysOn('CUSTOM-TOOL');
-    expect(state.deferredCount).toBe(0);
-    expect(state.requiresReminder('sess-1', 'custom_tool', 'custom_tool')).toBe(false);
-
-    // resetIfConfigured works case-insensitively and with hyphens/underscores
-    state.authorize('sess-1', [{ id: 'some_tool', description: 'desc', parameters: {} }]);
-    expect(state.isAuthorized('sess-1', 'some_tool')).toBe(true);
-
-    expect(state.resetIfConfigured('compress', 'sess-1')).toBe(true);
-    expect(state.isAuthorized('sess-1', 'some_tool')).toBe(false);
-
-    state.authorize('sess-1', [{ id: 'some_tool', description: 'desc', parameters: {} }]);
-    expect(state.isAuthorized('sess-1', 'some_tool')).toBe(true);
-
-    expect(state.resetIfConfigured('my_reset_tool', 'sess-1')).toBe(true);
-    expect(state.isAuthorized('sess-1', 'some_tool')).toBe(false);
-  });
-});
 
 // ============================================================================
 // SessionToolRegistry & DeliveryHistory
@@ -301,8 +75,8 @@ describe('SessionToolRegistry & DeliveryHistory', () => {
     expect(res.hits).toHaveLength(2);
     expect(res.responseText).toContain('tool_a: Tool A description');
     expect(res.responseText).not.toContain('parameters:');
-    expect(registry.isAuthorized('session-1', 'tool_a')).toBe(true);
-    expect(registry.isAuthorized('session-1', 'tool_b')).toBe(true);
+    expect(registry.isDelivered('session-1', 'tool_a')).toBe(true);
+    expect(registry.isDelivered('session-1', 'tool_b')).toBe(true);
   });
 
   it('returns No-Op Discovery when all results are previously delivered and authorized', () => {
@@ -493,9 +267,11 @@ describe('SessionEngine Canonical Specs & Context Seam', () => {
       5,
     );
 
-    // Third turn: should restore original description and input schema
+    // Third turn after authorization: description remains truncated ([deferred]) per
+    // ADR 0003 token virtualization — full docs were delivered via the search response
+    // message channel. The parameter schema stays intact in the tools array.
     engine.applyContextTurn(sessionCtx);
-    expect(sessionCtx.tools.custom_tool.description).toBe('A custom tool for processing data.');
+    expect(sessionCtx.tools.custom_tool.description).toBe('A custom tool for processing data. [deferred]');
     expect(sessionCtx.tools.custom_tool.input.properties.data).toBeDefined();
     expect(sessionCtx.tools.custom_tool.input.properties.reason).toBeUndefined();
   });
@@ -534,16 +310,16 @@ describe('SessionEngine Canonical Specs & Context Seam', () => {
       [{ id: 'tool_b', description: 'desc', parameters: {} }],
       5,
     );
-    expect(engine.sessionRegistry.isAuthorized(sessionID1, 'tool_a')).toBe(true);
-    expect(engine.sessionRegistry.isAuthorized(sessionID2, 'tool_b')).toBe(true);
+    expect(engine.sessionRegistry.isDelivered(sessionID1, 'tool_a')).toBe(true);
+    expect(engine.sessionRegistry.isDelivered(sessionID2, 'tool_b')).toBe(true);
 
     // Direct event shape
     engine.handleSessionEvent({ type: 'session.deleted', properties: { sessionID: sessionID1 } });
-    expect(engine.sessionRegistry.isAuthorized(sessionID1, 'tool_a')).toBe(false);
+    expect(engine.sessionRegistry.isDelivered(sessionID1, 'tool_a')).toBe(false);
 
     // Nested event shape ({ event: { type: ... } })
     engine.handleSessionEvent({ event: { type: 'session.deleted', properties: { sessionID: sessionID2 } } });
-    expect(engine.sessionRegistry.isAuthorized(sessionID2, 'tool_b')).toBe(false);
+    expect(engine.sessionRegistry.isDelivered(sessionID2, 'tool_b')).toBe(false);
   });
 });
 
@@ -599,23 +375,6 @@ describe('Storage Path & Transformers Env Utilities', () => {
 // ============================================================================
 
 describe('Sleev Compression & AgentMemory Tool Synchronization', () => {
-  it('expandSleevId expands single IDs and inclusive ranges accurately', () => {
-    expect(expandSleevId('m0001')).toContain('m0001');
-    expect(expandSleevId('m0001')).toContain('1');
-
-    const range = expandSleevId('m0001-m0005');
-    expect(range).toContain('m0001');
-    expect(range).toContain('m0002');
-    expect(range).toContain('m0003');
-    expect(range).toContain('m0004');
-    expect(range).toContain('m0005');
-
-    const shortRange = expandSleevId('m4-m6');
-    expect(shortRange).toContain('m4');
-    expect(shortRange).toContain('m5');
-    expect(shortRange).toContain('m6');
-  });
-
   it('revokes AgentMemory tools when their delivery messages are pruned by Sleev range compression', () => {
     const engine = new SessionEngine(
       {} as any,
@@ -644,8 +403,8 @@ describe('Sleev Compression & AgentMemory Tool Synchronization', () => {
       5,
     );
 
-    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(true);
-    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_save')).toBe(true);
+    expect(engine.sessionRegistry.isDelivered(sessionID, 'agentmemory_memory_recall')).toBe(true);
+    expect(engine.sessionRegistry.isDelivered(sessionID, 'agentmemory_memory_save')).toBe(true);
 
     // 2. Simulate conversation context where agentmemory_memory_recall was delivered in message m0002,
     //    and agentmemory_memory_save was delivered in message m0006
@@ -684,38 +443,19 @@ describe('Sleev Compression & AgentMemory Tool Synchronization', () => {
     // 3. Run syncSleevCompression
     const revoked = engine.syncSleevCompression(sessionID, messages);
 
-    // agentmemory_memory_recall was inside pruned message range m0001-m0003 -> revoked!
-    expect(revoked).toContain('agentmemory_memory_recall');
-    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(false);
+    // Under ADR 0003, tools are ungated and authorizations are not subject to ephemeral text presence revocation
+    expect(revoked).toEqual([]);
+    expect(engine.sessionRegistry.isDelivered(sessionID, 'agentmemory_memory_recall')).toBe(true);
+    expect(engine.sessionRegistry.isDelivered(sessionID, 'agentmemory_memory_save')).toBe(true);
 
-    // agentmemory_memory_save was in active message m0006 -> still authorized!
-    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_save')).toBe(true);
-
-    // 4. Attempting to call agentmemory_memory_recall without re-search throws [Tool Search Required]
+    // 4. In Option 2+, calling assertAuthorized does not throw (execution is ungated per ADR 0003)
     expect(() => {
       engine.assertAuthorized('agentmemory_memory_recall', sessionID, 'agentmemory_memory_recall');
-    }).toThrowError(/\[Tool Search Required\]/);
+    }).not.toThrow();
 
     // 5. Calling agentmemory_memory_save succeeds without error
     expect(() => {
       engine.assertAuthorized('agentmemory_memory_save', sessionID, 'agentmemory_memory_save');
-    }).not.toThrow();
-
-    // 6. Re-searching agentmemory_memory_recall re-delivers schema and re-authorizes it cleanly
-    const reAuthResult = engine.sessionRegistry.processSearchResult(
-      sessionID,
-      [
-        { id: 'agentmemory_memory_recall', description: 'Search past session observations', parameters: { type: 'object' } },
-      ],
-      5,
-    );
-
-    // Because delivery history was removed upon revocation, re-search delivers full schema (kind: 'new')
-    expect(reAuthResult.kind).toBe('new');
-    expect(reAuthResult.responseText).toContain('agentmemory_memory_recall');
-    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(true);
-    expect(() => {
-      engine.assertAuthorized('agentmemory_memory_recall', sessionID, 'agentmemory_memory_recall');
     }).not.toThrow();
   });
 
@@ -740,7 +480,7 @@ describe('Sleev Compression & AgentMemory Tool Synchronization', () => {
       [{ id: 'agentmemory_memory_recall', description: 'Search past session observations', parameters: { type: 'object' } }],
       5,
     );
-    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(true);
+    expect(engine.sessionRegistry.isDelivered(sessionID, 'agentmemory_memory_recall')).toBe(true);
 
     // 1. Sleev prunes EVERY message INCLUDING the delivery message for agentmemory_memory_recall
     const messages = [
@@ -773,7 +513,7 @@ describe('Sleev Compression & AgentMemory Tool Synchronization', () => {
     // 3. Run syncSleevCompression WITH tools -> MUST NOT revoke
     const revoked = engine.syncSleevCompression(sessionID, messages, tools);
     expect(revoked).not.toContain('agentmemory_memory_recall');
-    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(true);
+    expect(engine.sessionRegistry.isDelivered(sessionID, 'agentmemory_memory_recall')).toBe(true);
     expect(() => {
       engine.assertAuthorized('agentmemory_memory_recall', sessionID, 'agentmemory_memory_recall');
     }).not.toThrow();
@@ -800,7 +540,7 @@ describe('Sleev Compression & AgentMemory Tool Synchronization', () => {
       [{ id: 'agentmemory_memory_recall', description: 'Search past session observations', parameters: { type: 'object' } }],
       5,
     );
-    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(true);
+    expect(engine.sessionRegistry.isDelivered(sessionID, 'agentmemory_memory_recall')).toBe(true);
 
     // 1. All messages pruned (no tool name anywhere in text)
     const messages = [
@@ -823,13 +563,240 @@ describe('Sleev Compression & AgentMemory Tool Synchronization', () => {
       some_other_tool: { description: 'other', input: { type: 'object' } },
     };
 
-    // 3. Must revoke: tool absent from BOTH durable channel AND message text
+    // 3. Under ADR 0003, tools are ungated and authorizations are not subject to ephemeral text presence revocation
     const revoked = engine.syncSleevCompression(sessionID, messages, tools);
-    expect(revoked).toContain('agentmemory_memory_recall');
-    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(false);
+    expect(revoked).toEqual([]);
+    expect(engine.sessionRegistry.isDelivered(sessionID, 'agentmemory_memory_recall')).toBe(true);
+    // 4. In Option 2+, calling assertAuthorized does not throw (execution is ungated per ADR 0003)
     expect(() => {
       engine.assertAuthorized('agentmemory_memory_recall', sessionID, 'agentmemory_memory_recall');
-    }).toThrowError(/\[Tool Search Required\]/);
+    }).not.toThrow();
+  });
+});
+
+// ============================================================================
+// Option 2+ Stateless Advisory Tool Discovery
+// ============================================================================
+
+describe('Option 2+ Stateless Advisory Tool Discovery', () => {
+  function createEngine(overrides: Record<string, unknown> = {}) {
+    return new SessionEngine(
+      {} as any,
+      {
+        alwaysOn: [],
+        resetTools: ['compress'],
+        maxResults: 5,
+        deferLabel: '[deferred]',
+        embedding: { enabled: false },
+        ...overrides,
+      } as any,
+    );
+  }
+
+  it('unsearched deferred tool calls assertAuthorized -> succeeds without error', () => {
+    const engine = createEngine();
+    engine.deferTool('custom_database_query', 'Query database tables. [deferred]', { type: 'object' });
+    const sessionID = 'ses-advisory-1';
+
+    // Calling assertAuthorized for unsearched deferred tool must not throw
+    expect(() => {
+      engine.assertAuthorized('custom_database_query', sessionID, 'custom_database_query');
+    }).not.toThrow();
+  });
+
+  it('failed tool execution produces reactive [Tool Hint]', async () => {
+    const engine = createEngine();
+    engine.deferTool('custom_api_caller', 'Call remote REST API. [deferred]', { type: 'object' });
+    const sessionID = 'ses-advisory-2';
+
+    // Successful execution (no error) does not produce hint
+    const successNotice = engine.handleToolExecuted('custom_api_caller', sessionID, { isError: false, output: 'Success' });
+    expect(successNotice).toBeNull();
+
+    // Failed tool execution produces reactive tool hint
+    const failedNotice = engine.handleToolExecuted('custom_api_caller', sessionID, {
+      isError: true,
+      error: new Error('Invalid params'),
+    });
+    expect(failedNotice).toContain('[Tool Hint]');
+    expect(failedNotice).toContain('Execution failed for "custom_api_caller"');
+    expect(failedNotice).toContain('detailed usage guidelines and documentation');
+    expect(failedNotice).not.toContain('parameter schema');
+    expect(failedNotice).toContain('tool_search_regex({ pattern: "^custom_api_caller$" })');
+
+    // Also detects structured status: "error"
+    const statusErrorNotice = engine.handleToolExecuted('custom_api_caller', 'ses-advisory-alt', {
+      status: 'error',
+    } as any);
+    expect(statusErrorNotice).toContain('[Tool Hint]');
+
+    // If tool was already delivered in that session, reactive hint is suppressed
+    await engine.searchToolSpecs.tool_search_regex.execute(
+      { pattern: '^custom_api_caller$' },
+      { sessionID },
+    );
+    const suppressedNotice = engine.handleToolExecuted('custom_api_caller', sessionID, {
+      isError: true,
+      error: new Error('Invalid params'),
+    });
+    expect(suppressedNotice).toBeNull();
+  });
+
+  it('resetTools execution clears DeliveryHistory silently without injecting reset banner into output', async () => {
+    const engine = createEngine({ resetTools: ['compress'] });
+    engine.deferTool('git_push', 'Push local commits to remote. [deferred]', { type: 'object' });
+    const sessionID = 'ses-advisory-reset';
+
+    // 1. Deliver tool
+    await engine.searchToolSpecs.tool_search_regex.execute(
+      { pattern: '^git_push$' },
+      { sessionID },
+    );
+    expect(engine.sessionRegistry.isDelivered(sessionID, 'git_push')).toBe(true);
+
+    // 2. Execute reset tool (compress) - must not pollute output with banner
+    const notice = engine.handleToolExecuted('compress', sessionID, { isError: false, output: 'OK' });
+    expect(notice).toBeNull();
+
+    // 3. Delivery history for session must be cleared
+    expect(engine.sessionRegistry.isDelivered(sessionID, 'git_push')).toBe(false);
+
+    // 4. Searching again delivers the tool again rather than suppressing as duplicate
+    const reSearch = await engine.searchToolSpecs.tool_search_regex.execute(
+      { pattern: '^git_push$' },
+      { sessionID },
+    );
+    expect(reSearch).toContain('Found 1 tool(s)');
+    expect(reSearch).toContain('git_push');
+  });
+
+  it('DeliveryHistory suppression returns "No new tools discovered" on duplicate search in same epoch, and clears on compactSession', async () => {
+    const engine = createEngine();
+    engine.deferTool('git_push', 'Push local commits to remote. [deferred]', { type: 'object' });
+    const sessionID = 'ses-advisory-3';
+
+    // First search delivers tool
+    const firstSearch = await engine.searchToolSpecs.tool_search_regex.execute(
+      { pattern: '^git_push$' },
+      { sessionID },
+    );
+    expect(firstSearch).toContain('Found 1 tool(s)');
+    expect(firstSearch).toContain('git_push');
+
+    // Duplicate search in same epoch suppresses delivery with "No new tools discovered"
+    const duplicateSearch = await engine.searchToolSpecs.tool_search_regex.execute(
+      { pattern: '^git_push$' },
+      { sessionID },
+    );
+    expect(duplicateSearch).toContain('No new tools discovered. Previously delivered: git_push.');
+
+    // compactSession clears delivery history
+    engine.compactSession(sessionID);
+
+    // After compaction, search delivers the tool again
+    const postCompactSearch = await engine.searchToolSpecs.tool_search_regex.execute(
+      { pattern: '^git_push$' },
+      { sessionID },
+    );
+    expect(postCompactSearch).toContain('Found 1 tool(s)');
+    expect(postCompactSearch).toContain('git_push');
+  });
+
+  it('generates advisory policyText and descriptions without "required before use" or "unlock" phrasing', () => {
+    const engine = createEngine();
+    engine.deferTool('advisory_tool', 'Sample tool description. [deferred]', { type: 'object' });
+
+    const transformState = engine.prepareForSystemTransform();
+    expect(transformState.policyText).toContain('[Tool Search Policy]');
+    expect(transformState.policyText).toContain('Direct execution: You may invoke any tool immediately');
+    expect(transformState.policyText).not.toContain('a search is required before use');
+    expect(transformState.policyText).not.toContain('unlock');
+
+    const searchDesc = engine.searchToolSpecs.tool_search.description;
+    expect(searchDesc).toContain('WHEN NOT TO USE');
+    expect(searchDesc).toContain('understand its parameters');
+
+    const regexDesc = engine.searchToolSpecs.tool_search_regex.description;
+    expect(regexDesc).not.toContain('unlock MULTIPLE');
+    expect(regexDesc).toContain('Standard tools you already know how to invoke');
+  });
+
+  it('DeliveryHistory evicts oldest sessions when maxSessions LRU capacity is exceeded', () => {
+    const dh = new DeliveryHistory({ maxSessions: 2 });
+    dh.recordDelivered('sess-1', 'tool_a', 'fp_a');
+    dh.recordDelivered('sess-2', 'tool_b', 'fp_b');
+
+    expect(dh.hasDelivered('sess-1', 'tool_a')).toBe(true);
+    expect(dh.hasDelivered('sess-2', 'tool_b')).toBe(true);
+
+    // Access sess-1 to make it more recently used than sess-2
+    expect(dh.hasDelivered('sess-1', 'tool_a')).toBe(true);
+
+    // Adding sess-3 should evict sess-2 (least recently used)
+    dh.recordDelivered('sess-3', 'tool_c', 'fp_c');
+
+    expect(dh.hasDelivered('sess-1', 'tool_a')).toBe(true);
+    expect(dh.hasDelivered('sess-3', 'tool_c')).toBe(true);
+    expect(dh.hasDelivered('sess-2', 'tool_b')).toBe(false);
+  });
+
+  it('session.deleted lifecycle event clears DeliveryHistory for deleted session', () => {
+    const engine = createEngine();
+    engine.sessionRegistry.recordDelivered('sess-del', 'tool_x', 'fp_x');
+
+    expect(engine.sessionRegistry.isDelivered('sess-del', 'tool_x')).toBe(true);
+
+    engine.handleSessionEvent({ type: 'session.deleted', properties: { sessionID: 'sess-del' } });
+    expect(engine.sessionRegistry.isDelivered('sess-del', 'tool_x')).toBe(false);
+  });
+
+  it('failed compress execution does not clear DeliveryHistory', () => {
+    const engine = createEngine();
+    engine.sessionRegistry.recordDelivered('sess-fail', 'tool_m', 'fp_m');
+    expect(engine.sessionRegistry.isDelivered('sess-fail', 'tool_m')).toBe(true);
+
+    // Failed compress call
+    const failedOutput = { isError: true, error: new Error('Compress execution failed'), content: 'Error' };
+    engine.enrichToolExecutionOutput('compress', 'sess-fail', failedOutput);
+
+    // DeliveryHistory should NOT have been cleared
+    expect(engine.sessionRegistry.isDelivered('sess-fail', 'tool_m')).toBe(true);
+  });
+
+  it('provides schema fallback hint when tool_search_regex is unavailable in session manifest', () => {
+    const engine = createEngine();
+    engine.deferTool('subagent_tool', 'Subagent tool. [deferred]', { type: 'object' });
+
+    // Session manifest WITHOUT tool_search_regex (e.g. subagent)
+    engine.applyContextTurn({
+      sessionID: 'subagent-sess',
+      tools: {
+        subagent_tool: { description: 'Subagent tool. [deferred]', input: {} },
+      },
+    } as any);
+
+    const errorOutput: any = { isError: true, error: new Error('Missing argument') };
+    engine.enrichToolExecutionOutput('subagent_tool', 'subagent-sess', errorOutput);
+
+    expect(errorOutput.output).toContain('[Tool Hint]: Execution failed for "subagent_tool"');
+    expect(errorOutput.output).toContain('Review parameter types, required fields, and boundary constraints in the tool schema');
+    expect(errorOutput.output).not.toContain('call tool_search_regex');
+  });
+
+  it('idempotency guard prevents duplicating [Tool Hint] if already appended', () => {
+    const engine = createEngine();
+    engine.deferTool('flaky_tool', 'Flaky tool. [deferred]', { type: 'object' });
+
+    const errorOutput: any = {
+      isError: true,
+      error: new Error('Execution failed'),
+      output: 'Failure [Tool Hint]: Execution failed for "flaky_tool". To inspect detailed usage guidelines',
+    };
+
+    engine.enrichToolExecutionOutput('flaky_tool', 'sess-flaky', errorOutput);
+    // Count occurrences of [Tool Hint]
+    const matches = (errorOutput.output.match(/\[Tool Hint\]/g) || []).length;
+    expect(matches).toBe(1);
   });
 });
 
