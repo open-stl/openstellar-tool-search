@@ -255,31 +255,27 @@ export class DeliveryHistory {
     this.history = this.persistence.load();
   }
 
+  private getDeliveredFingerprint(session: Map<string, string>, canonicalID: string): string | undefined {
+    const direct = session.get(canonicalID);
+    if (direct) return direct;
+    const norm = normalizeToolId(canonicalID);
+    for (const [key, val] of session.entries()) {
+      if (normalizeToolId(key) === norm) return val;
+    }
+    return undefined;
+  }
+
   hasDelivered(sessionID: string, canonicalID: string): boolean {
     const session = this.history.get(sessionID);
     if (!session) return false;
-    if (session.has(canonicalID)) return true;
-    const norm = normalizeToolId(canonicalID);
-    for (const key of session.keys()) {
-      if (normalizeToolId(key) === norm) return true;
-    }
-    return false;
+    return this.getDeliveredFingerprint(session, canonicalID) !== undefined;
   }
 
   /** Check if (id, fingerprint) pair is new for this session. */
   isNewDiscovery(sessionID: string, canonicalID: string, fingerprint: string): boolean {
     const session = this.history.get(sessionID);
     if (!session) return true;
-    let existing = session.get(canonicalID);
-    if (!existing) {
-      const norm = normalizeToolId(canonicalID);
-      for (const [key, val] of session.entries()) {
-        if (normalizeToolId(key) === norm) {
-          existing = val;
-          break;
-        }
-      }
-    }
+    const existing = this.getDeliveredFingerprint(session, canonicalID);
     if (!existing) return true;
     return existing !== fingerprint;
   }

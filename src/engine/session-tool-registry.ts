@@ -85,8 +85,8 @@ export class SessionToolRegistry {
     return this.authorization.isAlwaysOn(toolID);
   }
 
-  public isDeferred(toolID: string): boolean {
-    return this.authorization.isDeferred(toolID);
+  public isDeferred(toolID: string, isKnownInVault?: boolean): boolean {
+    return this.authorization.isDeferred(toolID) || (!this.authorization.isAlwaysOn(toolID) && Boolean(isKnownInVault));
   }
 
   public isDelivered(sessionID: string | undefined, canonicalID: string): boolean {
@@ -113,7 +113,11 @@ export class SessionToolRegistry {
   }
 
   public resetIfConfigured(toolID: string, sessionID: string | undefined): boolean {
-    return this.authorization.resetIfConfigured(toolID, sessionID);
+    const didReset = this.authorization.resetIfConfigured(toolID, sessionID);
+    if (didReset && sessionID) {
+      this.deliveryHistory.clear(sessionID);
+    }
+    return didReset;
   }
 
   public compactSession(sessionID: string | undefined): void {

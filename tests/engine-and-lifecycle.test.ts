@@ -860,8 +860,16 @@ describe('Option 2+ Stateless Advisory Tool Discovery', () => {
       error: new Error('Invalid params'),
     });
     expect(failedNotice).toContain('[Tool Hint]');
-    expect(failedNotice).toContain('Parameter validation or execution failed for "custom_api_caller"');
+    expect(failedNotice).toContain('Execution failed for "custom_api_caller"');
+    expect(failedNotice).toContain('detailed usage guidelines and documentation');
+    expect(failedNotice).not.toContain('parameter schema');
     expect(failedNotice).toContain('tool_search_regex({ pattern: "^custom_api_caller$" })');
+
+    // Also detects structured status: "error"
+    const statusErrorNotice = engine.handleToolExecuted('custom_api_caller', 'ses-advisory-alt', {
+      status: 'error',
+    } as any);
+    expect(statusErrorNotice).toContain('[Tool Hint]');
 
     // If tool was already delivered in that session, reactive hint is suppressed
     await engine.searchToolSpecs.tool_search_regex.execute(
@@ -873,6 +881,34 @@ describe('Option 2+ Stateless Advisory Tool Discovery', () => {
       error: new Error('Invalid params'),
     });
     expect(suppressedNotice).toBeNull();
+  });
+
+  it('resetTools execution clears DeliveryHistory silently without injecting reset banner into output', async () => {
+    const engine = createEngine({ resetTools: ['compress'] });
+    engine.deferTool('git_push', 'Push local commits to remote. [deferred]', { type: 'object' });
+    const sessionID = 'ses-advisory-reset';
+
+    // 1. Deliver tool
+    await engine.searchToolSpecs.tool_search_regex.execute(
+      { pattern: '^git_push$' },
+      { sessionID },
+    );
+    expect(engine.sessionRegistry.isDelivered(sessionID, 'git_push')).toBe(true);
+
+    // 2. Execute reset tool (compress) - must not pollute output with banner
+    const notice = engine.handleToolExecuted('compress', sessionID, { isError: false, output: 'OK' });
+    expect(notice).toBeNull();
+
+    // 3. Delivery history for session must be cleared
+    expect(engine.sessionRegistry.isDelivered(sessionID, 'git_push')).toBe(false);
+
+    // 4. Searching again delivers the tool again rather than suppressing as duplicate
+    const reSearch = await engine.searchToolSpecs.tool_search_regex.execute(
+      { pattern: '^git_push$' },
+      { sessionID },
+    );
+    expect(reSearch).toContain('Found 1 tool(s)');
+    expect(reSearch).toContain('git_push');
   });
 
   it('DeliveryHistory suppression returns "No new tools discovered" on duplicate search in same epoch, and clears on compactSession', async () => {

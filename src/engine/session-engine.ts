@@ -197,25 +197,28 @@ export class SessionEngine {
   }
 
   public isDeferred(canonicalID: string): boolean {
-    return this.sessionRegistry.isDeferred(canonicalID) || (!this.sessionRegistry.isAlwaysOn(canonicalID) && this.vault.has(canonicalID));
+    return this.sessionRegistry.isDeferred(canonicalID, this.vault.has(canonicalID));
   }
 
   /**
-   * Post-execution hook: resets authorizations when a configured reset tool executes,
-   * and appends a reactive advisory hint when a deferred tool execution fails.
+   * Post-execution hook: resets authorizations and clears delivery history when a configured
+   * reset tool executes, and appends a reactive advisory hint when a deferred tool execution fails.
    */
   public handleToolExecuted(
     toolID: string,
     sessionID: string | undefined,
-    executionResult?: { error?: unknown; isError?: boolean; output?: unknown },
+    executionResult?: { error?: unknown; isError?: boolean; status?: unknown; output?: unknown },
   ): string | null {
-    let resetNotice: string | null = null;
-    if (this.sessionRegistry.resetIfConfigured(toolID, sessionID)) {
-      resetNotice = `\n\n[Tool Search] Context reset — tool search history cleared. You may continue executing tools directly or search for documentation as needed.`;
-    }
+    // Reset tools (e.g. compress) clear delivery history silently without output pollution
+    this.sessionRegistry.resetIfConfigured(toolID, sessionID);
 
     let reactiveHint: string | null = null;
-    const isError = Boolean(executionResult?.isError || executionResult?.error);
+    const isError = Boolean(
+      executionResult?.isError ||
+      executionResult?.error ||
+      executionResult?.status === 'error' ||
+      (typeof executionResult?.output === 'object' && (executionResult.output as any)?.status === 'error')
+    );
 
     if (isError && !SEARCH_IDS.has(toolID)) {
       const meta = this.vault.resolveAlias(toolID);
@@ -223,14 +226,11 @@ export class SessionEngine {
       const isDeferred = this.isDeferred(canonical);
       const alreadyDelivered = this.sessionRegistry.isDelivered(sessionID, canonical);
       if (isDeferred && !alreadyDelivered) {
-        reactiveHint = `\n\n[Tool Hint]: Parameter validation or execution failed for "${toolID}". To inspect the full parameter schema and usage documentation, call tool_search_regex({ pattern: "^${canonical}$" }).`;
+        reactiveHint = `\n\n[Tool Hint]: Execution failed for "${toolID}". To inspect detailed usage guidelines and documentation, call tool_search_regex({ pattern: "^${canonical}$" }).`;
       }
     }
 
-    if (resetNotice && reactiveHint) {
-      return `${resetNotice}${reactiveHint}`;
-    }
-    return resetNotice ?? reactiveHint ?? null;
+    return reactiveHint;
   }
 
   public enrichToolExecutionOutput(
@@ -239,8 +239,7 @@ export class SessionEngine {
     output: any,
   ): void {
     if (!output) return;
-    const isError = Boolean(output.isError || output.error);
-    const notice = this.handleToolExecuted(toolID, sessionID, { isError, error: output.error });
+    const notice = this.handleToolExecuted(toolID, sessionID, output);
     if (!notice) return;
 
     if (typeof output.content === 'string') {

@@ -214,12 +214,10 @@ describe('OpenCode 2.0 setupV2', () => {
     await afterHook({ tool: 'file_read', sessionID: 'ses-2' }, normalOutput);
     expect(normalOutput.output).toBe('Read completed');
 
-    // Execute reset tool (compress) in after hook: appends notice
+    // Execute reset tool (compress) in after hook: output remains clean (no banner pollution)
     const compressOutput = { output: 'Context compressed' };
     await afterHook({ tool: 'compress', sessionID: 'ses-2' }, compressOutput);
-    expect(compressOutput.output).toBe(
-      'Context compressed\n\n[Tool Search] Context reset — tool search history cleared. You may continue executing tools directly or search for documentation as needed.',
-    );
+    expect(compressOutput.output).toBe('Context compressed');
 
     // In Option 2+, execution is ungated so file_read does not throw
     await expect(beforeHook({ tool: 'file_read', sessionID: 'ses-2' })).resolves.toBeUndefined();

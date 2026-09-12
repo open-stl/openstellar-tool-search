@@ -263,7 +263,7 @@ describe('ToolSearchPlugin', () => {
     const failedOutput = { error: new Error('Missing parameter') };
     await hooks['tool.execute.after']!({ tool: 'unsearched_tool', sessionID: 'strict-error-session' } as any, failedOutput as any);
     expect((failedOutput as any).output).toContain(
-      '[Tool Hint]: Parameter validation or execution failed for "unsearched_tool". To inspect the full parameter schema and usage documentation, call tool_search_regex({ pattern: "^unsearched_tool$" }).'
+      '[Tool Hint]: Execution failed for "unsearched_tool". To inspect detailed usage guidelines and documentation, call tool_search_regex({ pattern: "^unsearched_tool$" }).'
     );
   });
 
@@ -314,7 +314,7 @@ describe('ToolSearchPlugin', () => {
       // 5. Authorization resets on compress
       const compressOut = { output: 'compressed' };
       await hooks['tool.execute.after']!({ tool: 'compress', sessionID, callID: 'c4' } as any, compressOut as any);
-      expect(compressOut.output).toContain('[Tool Search] Context reset — tool search history cleared');
+      expect(compressOut.output).toBe('compressed');
 
       // 6. After compress reset, skill execution remains ungated per ADR 0003
       await expect(
@@ -391,7 +391,7 @@ describe('ToolSearchPlugin', () => {
 
       const compressOut = { output: 'Compaction finished' };
       await hooks['tool.execute.after']!({ tool: 'compress', sessionID: 'sess_default_a', callID: 'c2' } as any, compressOut as any);
-      expect(compressOut.output).toBe('Compaction finished\n\n[Tool Search] Context reset — tool search history cleared. You may continue executing tools directly or search for documentation as needed.');
+      expect(compressOut.output).toBe('Compaction finished');
 
       await expect(
         hooks['tool.execute.before']!({ tool: 'git_commit', sessionID: 'sess_default_a' } as any, {} as any)
@@ -419,7 +419,7 @@ describe('ToolSearchPlugin', () => {
 
       const customResetOut = { output: 'Custom compaction done' };
       await hooks['tool.execute.after']!({ tool: 'custom_compaction', sessionID: 'sess_custom_a', callID: 'c1' } as any, customResetOut as any);
-      expect(customResetOut.output).toBe('Custom compaction done\n\n[Tool Search] Context reset — tool search history cleared. You may continue executing tools directly or search for documentation as needed.');
+      expect(customResetOut.output).toBe('Custom compaction done');
 
       await expect(
         hooks['tool.execute.before']!({ tool: 'git_commit', sessionID: 'sess_custom_a' } as any, {} as any)
@@ -434,7 +434,7 @@ describe('ToolSearchPlugin', () => {
 
       const compressOutB = { output: 'Compressed session B' };
       await hooks['tool.execute.after']!({ tool: 'compress', sessionID: 'sess_custom_b', callID: 'c4' } as any, compressOutB as any);
-      expect(compressOutB.output).toBe('Compressed session B\n\n[Tool Search] Context reset — tool search history cleared. You may continue executing tools directly or search for documentation as needed.');
+      expect(compressOutB.output).toBe('Compressed session B');
 
       await expect(
         hooks['tool.execute.before']!({ tool: 'git_commit', sessionID: 'sess_custom_b' } as any, {} as any)
