@@ -81,6 +81,19 @@ export class SessionToolRegistry {
     return this.authorization.deferredCount;
   }
 
+  public isAlwaysOn(toolID: string): boolean {
+    return this.authorization.isAlwaysOn(toolID);
+  }
+
+  public isDeferred(toolID: string): boolean {
+    return this.authorization.isDeferred(toolID);
+  }
+
+  public isDelivered(sessionID: string | undefined, canonicalID: string): boolean {
+    if (!sessionID) return false;
+    return this.deliveryHistory.hasDelivered(sessionID, canonicalID);
+  }
+
   public getAuthorizedTools(sessionID: string | undefined): string[] {
     return this.authorization.getAuthorizedTools(sessionID);
   }

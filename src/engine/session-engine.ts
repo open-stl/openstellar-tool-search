@@ -37,7 +37,8 @@ export function buildToolSearchDescription(deferLabel: string): string {
 Call tool_search({ query: "<task description>" }).
 WHEN TO USE: you need a capability but do not know which tool provides it (e.g. "search git commit history", "inspect AST"), or discovering relevant tools for a broad task.
 WHEN NOT TO USE:
-- You already know the exact tool ID(s) (e.g. "skill", "read", "bash") — use tool_search_regex({ pattern: "^tool_name$" }) instead.
+- You already know how to invoke the tool and understand its parameters — invoke it directly without searching.
+- You already know the exact tool ID(s) (e.g. "skill", "read", "bash") and need documentation — use tool_search_regex({ pattern: "^tool_name$" }) instead.
 - DO NOT pass space-separated lists of multiple tool names — use tool_search_regex with alternation instead.
 - You already searched this tool in the current active context and know its canonical ID — call it directly instead.`;
 }
@@ -49,10 +50,12 @@ export function buildToolSearchRegexDescription(_deferLabel?: string): string {
   return `Retrieve full descriptions for known tool ID(s) or pattern matching using regex. Returns matching tool IDs and descriptions (parameter schemas are always present in the tools array).
 Call tool_search_regex({ pattern: "<regex>" }).
 WHEN TO USE:
-- You know the exact tool ID (e.g. tool_search_regex({ pattern: "^skill$" })).
-- You want to unlock MULTIPLE known tools at once via regex alternation (e.g. tool_search_regex({ pattern: "^(read|write|edit|glob|grep|bash|skill)$" })).
+- You know the exact tool ID and need to inspect its full usage documentation, guidelines, or operational rules (e.g. tool_search_regex({ pattern: "^skill$" })).
+- You want to inspect MULTIPLE known tools at once via regex alternation (e.g. tool_search_regex({ pattern: "^(read|write|edit|glob|grep|bash|skill)$" })).
+- An execution failed and you need to review the tool's detailed parameter requirements and rules.
 - Finding tools matching a specific prefix or pattern (e.g. "^ctx_").
 WHEN NOT TO USE:
+- Standard tools you already know how to invoke (e.g. bash, read, glob, grep) — call them directly; search is NOT required before execution.
 - Semantic/fuzzy searches when tool names are unknown — use tool_search({ query: "<task>" }) instead.
 - You already searched this tool in the current active context and know its canonical ID — call it directly instead.`;
 }
@@ -184,23 +187,71 @@ export class SessionEngine {
   }
 
   /**
-   * Resolve the canonical tool ID for an executed (possibly cloaked `_ide`)
-   * tool name, then ask the session registry whether the model must be
-   * reminded to search first. Throws when the tool is not authorized.
+   * Pre-execution authorization check.
+   * Per ADR 0003 (Stateless Advisory Tool Discovery), execution is ungated so this is a no-op.
+   * Deferred tools are never blocked prior to search; reactive hints are provided on failure.
    */
-  public assertAuthorized(executedTool: string, sessionID: string | undefined, canonicalTool: string): void {
-    const sessionKey = sessionID ?? 'default';
-    if (this.sessionRegistry.requiresReminder(sessionID, executedTool, canonicalTool)) {
-      throw new Error(
-        `[Tool Search Required] Tool "${executedTool}" has not been searched in session "${sessionKey}". Call tool_search_regex({ pattern: "^${canonicalTool}$" }) to retrieve the full description and authorize this tool.`,
-      );
-    }
+  public assertAuthorized(_executedTool: string, _sessionID: string | undefined, _canonicalTool: string): void {
+    // No-op per ADR 0003: stateless advisory tool discovery. Execution is ungated.
+    return;
   }
 
-  /** Reset authorizations for a session when a configured reset tool executes. */
-  public handleToolExecuted(toolID: string, sessionID: string | undefined): string | null {
-    if (!this.sessionRegistry.resetIfConfigured(toolID, sessionID)) return null;
-    return `\n\n[Tool Search] Deferred tool authorizations have been reset — search for any tools you need to use.`;
+  public isDeferred(canonicalID: string): boolean {
+    return this.sessionRegistry.isDeferred(canonicalID) || (!this.sessionRegistry.isAlwaysOn(canonicalID) && this.vault.has(canonicalID));
+  }
+
+  /**
+   * Post-execution hook: resets authorizations when a configured reset tool executes,
+   * and appends a reactive advisory hint when a deferred tool execution fails.
+   */
+  public handleToolExecuted(
+    toolID: string,
+    sessionID: string | undefined,
+    executionResult?: { error?: unknown; isError?: boolean; output?: unknown },
+  ): string | null {
+    let resetNotice: string | null = null;
+    if (this.sessionRegistry.resetIfConfigured(toolID, sessionID)) {
+      resetNotice = `\n\n[Tool Search] Context reset — tool search history cleared. You may continue executing tools directly or search for documentation as needed.`;
+    }
+
+    let reactiveHint: string | null = null;
+    const isError = Boolean(executionResult?.isError || executionResult?.error);
+
+    if (isError && !SEARCH_IDS.has(toolID)) {
+      const meta = this.vault.resolveAlias(toolID);
+      const canonical = meta?.id ?? toolID;
+      const isDeferred = this.isDeferred(canonical);
+      const alreadyDelivered = this.sessionRegistry.isDelivered(sessionID, canonical);
+      if (isDeferred && !alreadyDelivered) {
+        reactiveHint = `\n\n[Tool Hint]: Parameter validation or execution failed for "${toolID}". To inspect the full parameter schema and usage documentation, call tool_search_regex({ pattern: "^${canonical}$" }).`;
+      }
+    }
+
+    if (resetNotice && reactiveHint) {
+      return `${resetNotice}${reactiveHint}`;
+    }
+    return resetNotice ?? reactiveHint ?? null;
+  }
+
+  public enrichToolExecutionOutput(
+    toolID: string,
+    sessionID: string | undefined,
+    output: any,
+  ): void {
+    if (!output) return;
+    const isError = Boolean(output.isError || output.error);
+    const notice = this.handleToolExecuted(toolID, sessionID, { isError, error: output.error });
+    if (!notice) return;
+
+    if (typeof output.content === 'string') {
+      output.content += notice;
+    } else if (Array.isArray(output.content)) {
+      output.content.push({ type: 'text', text: notice });
+    } else if (output.output !== undefined) {
+      output.output = `${String(output.output ?? '')}${notice}`;
+    } else {
+      output.output = notice;
+    }
   }
 
   /**
@@ -237,15 +288,15 @@ export class SessionEngine {
 
     const policyText = deferrals > 0
       ? [
-          `[Tool Search Policy] Tools marked "${this.deferLabel}" are deferred: their full description is not in your context.`,
-          '1. Retrieve a deferred tool\'s description ONCE per active context via tool_search_regex({ pattern: "^<id>$" }) when the tool ID is known.',
+          `[Tool Search Policy] Tools marked "${this.deferLabel}" are deferred: parameter schemas are complete and directly executable, but full prose descriptions are deferred to save context.`,
+          '1. Direct execution: You may invoke any tool immediately if you already understand its parameters.',
+          '2. Inspect documentation: Retrieve a deferred tool\'s full description and guidelines via tool_search_regex({ pattern: "^<id>$" }) when the tool ID is known, or when an execution fails.',
           '   - To retrieve MULTIPLE known tools at once, use regex alternation: tool_search_regex({ pattern: "^(toolA|toolB|toolC)$" }).',
-          '2. Discover tools by task or capability via tool_search({ query: "<task description>" }) only when the tool ID is unknown.',
+          '3. Discover new tools: Find tools by capability or task intent via tool_search({ query: "<task description>" }) when you do not know the tool name.',
           '   - DO NOT concatenate multiple tool names with spaces into tool_search.',
-          '3. After retrieval, call the tool by its canonical ID. Re-searching an already-known tool returns no new metadata and wastes tokens.',
-          '4. Re-retrieve only after compaction or reset (e.g. after compress), which clears search state.',
-          '5. Do NOT guess parameter schemas or descriptions — a search is required before use.',
-          'Search results are the authoritative source of the canonical tool ID; parameter schemas are always present in the tools array — only descriptions are deferred.',
+          '4. Duplicate suppression: Searching an already-delivered tool returns a concise reference to save context. Full descriptions can be re-retrieved after context compaction or reset (e.g. after compress).',
+          '5. Do NOT search standard tools you already know how to invoke (e.g. bash, read, glob, grep) unless you encounter an error or need specialized operational rules.',
+          'Search results provide the canonical ID; parameter schemas are always present in the tools array — only descriptions are deferred.',
         ].join('\n')
       : '';
 
@@ -316,47 +367,21 @@ export class SessionEngine {
 
   public compactSession(sessionID: string | undefined): string {
     this.sessionRegistry.compactSession(sessionID);
-    return '[Tool Search] Session compacted. Deferred tool authorizations have been reset — search for any tools you need to use.';
+    return '\n\n[Tool Search] Context compacted — tool search history cleared. You may continue executing tools directly or search for documentation as needed.';
   }
 
   /**
-   * Dynamically verify that authorized tools are actually present in the active conversation context.
-   * If a message containing a tool's search result was pruned (by Sleev, compaction, or context trimming),
-   * this selectively revokes authorization for that specific tool so the LLM is prompted to re-search.
+   * Under Stateless Advisory Discovery (Option 2+), routine turns without
+   * compaction events do not perform speculative presence-regex revocation
+   * over message text. Delivery suppression resets are strictly event-driven
+   * (session compaction or explicit Sleev compression prune events).
    */
   public syncActiveAuthorizations(
-    sessionID: string | undefined,
-    messages?: Array<{ role?: string; content?: unknown }>,
-    tools?: Record<string, any>,
+    _sessionID: string | undefined,
+    _messages?: Array<{ role?: string; content?: unknown }>,
+    _tools?: Record<string, any>,
   ): string[] {
-    if (!sessionID || !messages || messages.length === 0) return [];
-
-    const authorized = this.sessionRegistry.getAuthorizedTools(sessionID);
-    if (authorized.length === 0) return [];
-
-    let combinedText = '';
-    for (const msg of messages) {
-      combinedText += this.extractMessageText(msg) + '\n';
-    }
-
-    const revoked: string[] = [];
-    for (const toolID of authorized) {
-      const stillServable = !!tools && typeof tools === 'object' && this.toolStillServable(toolID, tools);
-
-      if (stillServable) continue;
-
-      const escaped = toolID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const presenceRegex = new RegExp(`(?:^|\\W)${escaped}(?::|\\b)`, 'm');
-      if (!presenceRegex.test(combinedText)) {
-        revoked.push(toolID);
-      }
-    }
-
-    if (revoked.length > 0) {
-      this.sessionRegistry.revokeTools(sessionID, revoked);
-    }
-
-    return revoked;
+    return [];
   }
 
   /**
@@ -432,42 +457,9 @@ export class SessionEngine {
       return this.syncActiveAuthorizations(sessionID, messages as any, tools);
     }
 
-    // 2. Identify unpruned message text
-    let activeText = '';
-    for (const msg of messages) {
-      const fullText = this.extractMessageText(msg);
-      // Check if this text chunk is wrapped with a sleev message ID
-      const tagMatch = fullText.match(/<sleev-id-(m\d+)>/i);
-      if (tagMatch) {
-        const msgId = tagMatch[1];
-        if (prunedIds.has(msgId) || prunedIds.has('m' + msgId)) {
-          // This message has been pruned by Sleev, skip it
-          continue;
-        }
-      }
-      activeText += fullText + '\n';
-    }
-
-    // 3. For each authorized tool, check presence in durable channel first (tools array),
-    //    then fall back to active message text.
-    const revoked: string[] = [];
-    for (const toolID of authorized) {
-      const stillServable = !!tools && typeof tools === 'object' && this.toolStillServable(toolID, tools);
-
-      if (stillServable) continue;
-
-      const escaped = toolID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const presenceRegex = new RegExp(`(?:^|\\W)${escaped}(?::|\\b)`, 'm');
-      if (!presenceRegex.test(activeText)) {
-        revoked.push(toolID);
-      }
-    }
-
-    if (revoked.length > 0) {
-      this.sessionRegistry.revokeTools(sessionID, revoked);
-    }
-
-    return revoked;
+    // 3. Under ADR 0003, tools are ungated and authorizations are not subject
+    //    to ephemeral text presence revocation.
+    return [];
   }
 
   /**

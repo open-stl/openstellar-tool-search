@@ -94,11 +94,12 @@ export class AuthorizationState {
     if (migrated) this.persistence.save(this.authorizations, this.lastSeen);
   }
 
-  private isAlwaysOn(id: string): boolean {
+  public isAlwaysOn(id: string): boolean {
     return this.alwaysOn.has(id) || this.normalizedAlwaysOn.has(normalizeToolId(id));
   }
 
-  private isDeferred(id: string): boolean {
+  public isDeferred(id: string): boolean {
+    if (this.isAlwaysOn(id)) return false;
     return this.deferredTools.has(id) || this.normalizedDeferredTools.has(normalizeToolId(id));
   }
 

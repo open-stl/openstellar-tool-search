@@ -684,38 +684,19 @@ describe('Sleev Compression & AgentMemory Tool Synchronization', () => {
     // 3. Run syncSleevCompression
     const revoked = engine.syncSleevCompression(sessionID, messages);
 
-    // agentmemory_memory_recall was inside pruned message range m0001-m0003 -> revoked!
-    expect(revoked).toContain('agentmemory_memory_recall');
-    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(false);
-
-    // agentmemory_memory_save was in active message m0006 -> still authorized!
+    // Under ADR 0003, tools are ungated and authorizations are not subject to ephemeral text presence revocation
+    expect(revoked).toEqual([]);
+    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(true);
     expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_save')).toBe(true);
 
-    // 4. Attempting to call agentmemory_memory_recall without re-search throws [Tool Search Required]
+    // 4. In Option 2+, calling assertAuthorized does not throw (execution is ungated per ADR 0003)
     expect(() => {
       engine.assertAuthorized('agentmemory_memory_recall', sessionID, 'agentmemory_memory_recall');
-    }).toThrowError(/\[Tool Search Required\]/);
+    }).not.toThrow();
 
     // 5. Calling agentmemory_memory_save succeeds without error
     expect(() => {
       engine.assertAuthorized('agentmemory_memory_save', sessionID, 'agentmemory_memory_save');
-    }).not.toThrow();
-
-    // 6. Re-searching agentmemory_memory_recall re-delivers schema and re-authorizes it cleanly
-    const reAuthResult = engine.sessionRegistry.processSearchResult(
-      sessionID,
-      [
-        { id: 'agentmemory_memory_recall', description: 'Search past session observations', parameters: { type: 'object' } },
-      ],
-      5,
-    );
-
-    // Because delivery history was removed upon revocation, re-search delivers full schema (kind: 'new')
-    expect(reAuthResult.kind).toBe('new');
-    expect(reAuthResult.responseText).toContain('agentmemory_memory_recall');
-    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(true);
-    expect(() => {
-      engine.assertAuthorized('agentmemory_memory_recall', sessionID, 'agentmemory_memory_recall');
     }).not.toThrow();
   });
 
@@ -823,13 +804,130 @@ describe('Sleev Compression & AgentMemory Tool Synchronization', () => {
       some_other_tool: { description: 'other', input: { type: 'object' } },
     };
 
-    // 3. Must revoke: tool absent from BOTH durable channel AND message text
+    // 3. Under ADR 0003, tools are ungated and authorizations are not subject to ephemeral text presence revocation
     const revoked = engine.syncSleevCompression(sessionID, messages, tools);
-    expect(revoked).toContain('agentmemory_memory_recall');
-    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(false);
+    expect(revoked).toEqual([]);
+    expect(engine.sessionRegistry.isAuthorized(sessionID, 'agentmemory_memory_recall')).toBe(true);
+    // 4. In Option 2+, calling assertAuthorized does not throw (execution is ungated per ADR 0003)
     expect(() => {
       engine.assertAuthorized('agentmemory_memory_recall', sessionID, 'agentmemory_memory_recall');
-    }).toThrowError(/\[Tool Search Required\]/);
+    }).not.toThrow();
+  });
+});
+
+// ============================================================================
+// Option 2+ Stateless Advisory Tool Discovery
+// ============================================================================
+
+describe('Option 2+ Stateless Advisory Tool Discovery', () => {
+  function createEngine(overrides: Record<string, unknown> = {}) {
+    return new SessionEngine(
+      {} as any,
+      {
+        alwaysOn: [],
+        resetTools: ['compress'],
+        maxResults: 5,
+        deferLabel: '[deferred]',
+        embedding: { enabled: false },
+        ...overrides,
+      } as any,
+    );
+  }
+
+  it('unsearched deferred tool calls assertAuthorized -> succeeds without error', () => {
+    const engine = createEngine();
+    engine.deferTool('custom_database_query', 'Query database tables. [deferred]', { type: 'object' });
+    const sessionID = 'ses-advisory-1';
+
+    // Calling assertAuthorized for unsearched deferred tool must not throw
+    expect(() => {
+      engine.assertAuthorized('custom_database_query', sessionID, 'custom_database_query');
+    }).not.toThrow();
+  });
+
+  it('failed tool execution produces reactive [Tool Hint]', async () => {
+    const engine = createEngine();
+    engine.deferTool('custom_api_caller', 'Call remote REST API. [deferred]', { type: 'object' });
+    const sessionID = 'ses-advisory-2';
+
+    // Successful execution (no error) does not produce hint
+    const successNotice = engine.handleToolExecuted('custom_api_caller', sessionID, { isError: false, output: 'Success' });
+    expect(successNotice).toBeNull();
+
+    // Failed tool execution produces reactive tool hint
+    const failedNotice = engine.handleToolExecuted('custom_api_caller', sessionID, {
+      isError: true,
+      error: new Error('Invalid params'),
+    });
+    expect(failedNotice).toContain('[Tool Hint]');
+    expect(failedNotice).toContain('Parameter validation or execution failed for "custom_api_caller"');
+    expect(failedNotice).toContain('tool_search_regex({ pattern: "^custom_api_caller$" })');
+
+    // If tool was already delivered in that session, reactive hint is suppressed
+    await engine.searchToolSpecs.tool_search_regex.execute(
+      { pattern: '^custom_api_caller$' },
+      { sessionID },
+    );
+    const suppressedNotice = engine.handleToolExecuted('custom_api_caller', sessionID, {
+      isError: true,
+      error: new Error('Invalid params'),
+    });
+    expect(suppressedNotice).toBeNull();
+  });
+
+  it('DeliveryHistory suppression returns "No new tools discovered" on duplicate search in same epoch, and clears on compactSession', async () => {
+    const engine = createEngine();
+    engine.deferTool('git_push', 'Push local commits to remote. [deferred]', { type: 'object' });
+    const sessionID = 'ses-advisory-3';
+
+    // First search delivers tool
+    const firstSearch = await engine.searchToolSpecs.tool_search_regex.execute(
+      { pattern: '^git_push$' },
+      { sessionID },
+    );
+    expect(firstSearch).toContain('Found 1 tool(s)');
+    expect(firstSearch).toContain('git_push');
+
+    // Duplicate search in same epoch suppresses delivery with "No new tools discovered"
+    const duplicateSearch = await engine.searchToolSpecs.tool_search_regex.execute(
+      { pattern: '^git_push$' },
+      { sessionID },
+    );
+    expect(duplicateSearch).toContain('No new tools discovered. Previously delivered: git_push.');
+
+    // compactSession clears delivery history
+    engine.compactSession(sessionID);
+
+    // After compaction, search delivers the tool again
+    const postCompactSearch = await engine.searchToolSpecs.tool_search_regex.execute(
+      { pattern: '^git_push$' },
+      { sessionID },
+    );
+    expect(postCompactSearch).toContain('Found 1 tool(s)');
+    expect(postCompactSearch).toContain('git_push');
+  });
+
+  it('generates advisory policyText and descriptions without "required before use" or "unlock" phrasing', () => {
+    const engine = createEngine();
+    engine.deferTool('advisory_tool', 'Sample tool description. [deferred]', { type: 'object' });
+
+    const transformState = engine.prepareForSystemTransform();
+    expect(transformState.policyText).toContain('[Tool Search Policy]');
+    expect(transformState.policyText).toContain('Direct execution: You may invoke any tool immediately');
+    expect(transformState.policyText).not.toContain('a search is required before use');
+    expect(transformState.policyText).not.toContain('unlock');
+
+    const searchDesc = engine.searchToolSpecs.tool_search.description;
+    expect(searchDesc).toContain('WHEN NOT TO USE');
+    expect(searchDesc).toContain('understand its parameters');
+
+    const regexDesc = engine.searchToolSpecs.tool_search_regex.description;
+    expect(regexDesc).not.toContain('unlock MULTIPLE');
+    expect(regexDesc).toContain('Standard tools you already know how to invoke');
+
+    // syncActiveAuthorizations is a safe no-op that does not speculatively revoke
+    const revoked = engine.syncActiveAuthorizations('any-session', [{ role: 'user', content: 'hello' }]);
+    expect(revoked).toEqual([]);
   });
 });
 

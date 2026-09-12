@@ -255,6 +255,17 @@ export class DeliveryHistory {
     this.history = this.persistence.load();
   }
 
+  hasDelivered(sessionID: string, canonicalID: string): boolean {
+    const session = this.history.get(sessionID);
+    if (!session) return false;
+    if (session.has(canonicalID)) return true;
+    const norm = normalizeToolId(canonicalID);
+    for (const key of session.keys()) {
+      if (normalizeToolId(key) === norm) return true;
+    }
+    return false;
+  }
+
   /** Check if (id, fingerprint) pair is new for this session. */
   isNewDiscovery(sessionID: string, canonicalID: string, fingerprint: string): boolean {
     const session = this.history.get(sessionID);

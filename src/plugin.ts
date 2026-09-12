@@ -47,10 +47,7 @@ const ToolSearchPluginImpl: Plugin = async (ctx, options?: PluginOptions): Promi
     'tool.execute.after': async (input, output) => {
       try {
         if (!input || !output) return;
-        const notice = runtime.handleToolExecuted(input.tool, input.sessionID);
-        if (notice) {
-          output.output = `${String(output.output ?? '')}${notice}`;
-        }
+        runtime.enrichToolExecutionOutput(input.tool, input.sessionID, output);
       } catch {
         // silently ignore
       }

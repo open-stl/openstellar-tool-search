@@ -70,6 +70,7 @@ export class ToolVault {
   }
 
   get(id: string): ToolMeta | undefined { return this.store.get(id); }
+  has(id: string): boolean { return this.store.has(id); }
   list(): ToolMeta[] { return this.store.list(); }
   get count(): number { return this.store.count; }
 }

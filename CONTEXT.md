@@ -32,9 +32,17 @@ _Avoid_: fail-open, silent-fail, dropped
 The set of tools opencode captures at session start; tools outside it are uncallable for that session.
 _Avoid_: tool list, catalog, frozen set
 
-**Deferred Authorization**:
-The session-bound permission state requiring a deferred tool to be discovered via search before execution.
-_Avoid_: tool approval, whitelist, unlocked tool
+**Advisory Discovery**:
+The non-blocking guidance pattern where deferred tools remain directly executable, while search interfaces (`tool_search`, `tool_search_regex`) provide on-demand documentation retrieval and contextual hints when executions fail.
+_Avoid_: authorization gate, permission check, execution prerequisite, deferred authorization
+
+**Reactive Hint**:
+The dynamic advisory message appended to a tool execution failure output guiding the model to retrieve complete parameter schemas and usage documentation via regex search.
+_Avoid_: error banner, failure alert, validation warning
+
+**Epoch Delivery Suppression**:
+The context-saving mechanism that suppresses redundant prose schema deliveries for tools previously discovered in the current context epoch, resetting only upon compaction.
+_Avoid_: cache deduplication, delivery filter, suppress repeat
 
 **Tool Vault**:
 The registry indexing all static and MCP tool metadata, descriptions, and parameter schemas.

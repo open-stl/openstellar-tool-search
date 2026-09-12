@@ -27,7 +27,7 @@ describe('v1 and v2 Unified End-to-End Contract Verification', () => {
     vi.restoreAllMocks();
   });
 
-  it('OpenCode v1: defers descriptions only, preserves parameters, blocks unsearched, authorizes via search, returns no parameters in search message', async () => {
+  it('OpenCode v1: defers descriptions only, preserves parameters, ungated execution, authorizes via search, returns no parameters in search message', async () => {
     const ctx: any = {
       client: {
         tui: {
@@ -69,11 +69,11 @@ describe('v1 and v2 Unified End-to-End Contract Verification', () => {
     expect(toolDefOutput.parameters.properties.deep).toBeDefined();
     expect(toolDefOutput.parameters.properties.reason).toBeUndefined();
 
-    // 2. Before execution: unauthorized tool is blocked
+    // 2. Before execution: unsearched tool execution is ungated per ADR 0003
     const sessionID = 'v1-test-session';
     await expect(
       hooks['tool.execute.before']!({ tool: 'symbol_find', sessionID } as any, {} as any),
-    ).rejects.toThrow(/\[Tool Search Required\] Tool "symbol_find" has not been searched/);
+    ).resolves.toBeUndefined();
 
     // 3. Search execution: tool_search_regex discovers and authorizes the tool
     const searchResult = await (hooks.tool as any).tool_search_regex.execute(
@@ -100,7 +100,7 @@ describe('v1 and v2 Unified End-to-End Contract Verification', () => {
     expect(systemOutput.system[1]).toContain('parameter schemas are always present in the tools array');
   });
 
-  it('OpenCode v2: defers descriptions only, preserves parameters, blocks unsearched, authorizes via search, returns no parameters in search message', async () => {
+  it('OpenCode v2: defers descriptions only, preserves parameters, ungated execution, authorizes via search, returns no parameters in search message', async () => {
     const transformCallbacks: Array<(registry: any) => void> = [];
     const toolHooks: Record<string, Function[]> = {};
     const sessionHooks: Record<string, Function[]> = {};
@@ -181,10 +181,10 @@ describe('v1 and v2 Unified End-to-End Contract Verification', () => {
     expect(sessionCtx.tools.data_query.input.properties.limit).toBeDefined();
     expect(sessionCtx.tools.data_query.input.properties.reason).toBeUndefined();
 
-    // 2. Before execution: unauthorized tool is blocked
+    // 2. Before execution: unsearched tool execution is ungated per ADR 0003
     await expect(
       toolHooks['execute.before'][0]({ tool: 'data_query', sessionID }),
-    ).rejects.toThrow(/\[Tool Search Required\] Tool "data_query" has not been searched/);
+    ).resolves.toBeUndefined();
 
     // 3. Search execution: tool_search authorizes the tool
     const searchRes = await registeredTools.tool_search_regex.execute(
