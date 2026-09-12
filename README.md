@@ -23,13 +23,13 @@
 - [How Dual Search Works](#how-dual-search-works)
   - [1. Search by Intent (`tool_search`)](#1-search-by-intent-tool_search)
   - [2. Search by Name / Pattern (`tool_search_regex`)](#2-search-by-name--pattern-tool_search_regex)
-  - [3. Deferred Authorization Lifecycle](#3-deferred-authorization-lifecycle)
+  - [3. Advisory Discovery Lifecycle](#3-advisory-discovery-lifecycle)
 - [Empirical Context Reduction & Scientific Benchmark](#empirical-context-reduction--scientific-benchmark)
   - [1. Token Reduction Across Schema Complexity Tiers](#1-token-reduction-across-schema-complexity-tiers)
   - [2. Information Retrieval & Evaluation Metrics (TREC / BEIR / BFCL Protocol)](#2-information-retrieval--evaluation-metrics-trec--beir--bfcl-protocol)
   - [3. Multi-Turn Compounding Scale & Cost Savings](#3-multi-turn-compounding-scale--cost-savings)
   - [4. Academic Research & Local Reproducibility](#4-academic-research--local-reproducibility)
-- [Configuration Reference (v1.0.0)](#configuration-reference-v100)
+- [Configuration Reference (v1.1.0)](#configuration-reference-v110)
   - [MCP Server Configuration (`mcp.servers`)](#mcp-server-configuration-mcpservers)
 - [Architecture & MCP Prewarming](#architecture--mcp-prewarming)
 - [Troubleshooting](#troubleshooting)
@@ -81,7 +81,7 @@ https://github.com/user-attachments/assets/4cad5981-6f0c-42d8-b7c5-32f42d6c5c7b
 │                                                                                                  │
 │  2. Exact ID / Regex Discovery:                                                                  │
 │     tool_search_regex({ pattern: "^codebase_memory_mcp_" })                                     │
-│     └── Unlocks: codebase_memory_mcp_search_graph, codebase_memory_mcp_trace_path, etc.          │
+│     └── Returns: codebase_memory_mcp_search_graph, codebase_memory_mcp_trace_path, etc.          │
 │                                                                                                  │
 │  3. Execution:                                                                                   │
 │     codebase_memory_mcp_search_graph({ query: "auth handlers", project: "app" })                │
@@ -169,10 +169,11 @@ tool_search_regex({ pattern: "^github_create_issue$" })
 tool_search_regex({ pattern: "^(read|write|edit|glob|grep|bash)$" })
 ```
 
-### 3. Deferred Authorization Lifecycle
-- **Search-Gated Invocation**: Calling an unsearched `[deferred]` tool returns a helpful `[Tool Search Required]` message pointing to the canonical search.
-- **Session Persistence**: Authorizations are cached per session (persisted atomically in `~/.cache/openstellar/tool-search/auth-state.json` with a 30-day TTL).
-- **Compaction Sync**: When Sleev or OpenCode compacts context history, tool authorizations are cleanly reset so stale tool assumptions do not pollute subsequent reasoning turns.
+### 3. Advisory Discovery Lifecycle
+- **Ungated Execution**: Tools execute immediately from Turn 0 — no search prerequisite. Description truncation is purely advisory, never a gate.
+- **On-Demand Discovery**: Call `tool_search_regex({ pattern: "^<id>$" })` when you need the full description, detailed usage conventions, or when a tool call fails.
+- **Delivery Suppression**: Within an active context epoch, repeated searches for already-delivered tools return a succinct no-op notice instead of duplicate prose. Compaction events or reset tools (`compress`) clear delivery history so documentation can be re-discovered in the next epoch.
+- **Reactive Hints**: When a `[deferred]` tool fails at execution time, the error payload is enriched with a `[Tool Hint]` pointing to the canonical search for detailed guidelines (suppressed if already delivered in the epoch, and omitted for always-on tools).
 
 ---
 
@@ -188,7 +189,7 @@ tool_search_regex({ pattern: "^(read|write|edit|glob|grep|bash)$" })
 
 </div>
 
-> 💡 **What the deferral removes**: only verbose description *prose* (everything after the first sentence). Parameter schemas — the bulk of every tool definition — stay fully present in the tools array at all times. This is deliberate: parameters are what the model needs to construct correct calls, and keeping them intact guarantees zero behavioral drift between the deferred and authorized states.
+> 💡 **What the deferral removes**: only verbose description *prose* (everything after the first sentence). Parameter schemas — the bulk of every tool definition — stay fully present in the tools array at all times. This is deliberate: parameters are what the model needs to construct correct calls, and keeping them intact guarantees zero behavioral drift between the truncated and full-description states.
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -212,7 +213,7 @@ tool_search_regex({ pattern: "^(read|write|edit|glob|grep|bash)$" })
 
 > 🌟 **Design Philosophy — Description Deferral, Not Schema Hiding**:
 > - **Descriptions are deferred**: collapsed to a first-sentence `[deferred]` stub. The model discovers the full description on demand via `tool_search` / `tool_search_regex`.
-> - **Parameter schemas are never deferred**: they remain byte-identical in every turn. Tool-calling accuracy is driven by the tools array — keeping it intact means calls are correct from the very first invocation after authorization.
+> - **Parameter schemas are never deferred**: they remain byte-identical in every turn. Tool-calling accuracy is driven by the tools array — keeping it intact means calls are correct from the very first invocation.
 > - **Compact Wire Accounting**: Measured on actual serialized wire payloads (`JSON.stringify(tools)`) without synthetic indentation or newline padding, ensuring reported numbers match proxy and gateway dashboards.
 
 ### 1. Token Reduction Across Production Tool Categories (Compact Wire JSON)
@@ -314,14 +315,14 @@ npm run bench
 
 ---
 
-## Configuration Reference (v1.0.0)
+## Configuration Reference (v1.1.0)
 
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `alwaysLoad` | `string[]` | `[]` | Array of tool IDs exempt from deferral (full descriptions always loaded in prompt). |
 | `maxResults` | `number` | `5` | Maximum number of ranked tool matches returned per query. |
 | `mode` | `'hybrid' \| 'keyword'` | `'hybrid'` | Search mode: `'hybrid'` (BM25 + ONNX vectors) or `'keyword'` (BM25 only). |
-| `resetTools` | `string[]` | `['compress']` | Tool names that trigger authorization reset upon execution (e.g. context compression). |
+| `resetTools` | `string[]` | `['compress']` | Tool names whose execution clears per-session delivery history (re-enabling documentation re-discovery for the next context epoch). |
 | `timeout` | `number` | `60000` | Global MCP server prewarm timeout in ms. Servers exceeding timeout fail-open cleanly. |
 | `mcp.servers` | `Record<string, McpServerConfig>` | `{}` | MCP server definitions adhering to the OpenCode v2 `mcp.servers` schema. |
 
@@ -382,14 +383,14 @@ OpenCode Startup
                                ▼
  ┌─────────────────────────────────────────────────────────────┐
  │ Agent Runtime Execution                                     │
- │ ├── tool_search / tool_search_regex ──► Authorizes Tool     │
+ │ ├── tool_search / tool_search_regex ──► Delivers Full Descriptions│
  │ └── tool.execute.* ───────────────────► Invokes MCP Bridge  │
  └─────────────────────────────────────────────────────────────┘
 ```
 
 1. **Prewarm Before Return**: The plugin awaits enabled MCP servers before returning hooks, guaranteeing tools exist in OpenCode's initial immutable session snapshot.
 2. **Fail-Open Isolation**: If an MCP server crashes or exceeds its timeout, it is marked with a status placeholder tool, allowing all other servers and tools to operate normally without hanging OpenCode.
-3. **Atomic Authorization Cache**: Authorizations survive CLI restarts via atomic JSON cache with automatic 30-day TTL expiration.
+3. **Stateless Advisory Model**: Execution is ungated from Turn 0. `tool_search` / `tool_search_regex` deliver full descriptions on demand, while an in-memory `DeliveryHistory` (LRU-bounded per session, cleared on compaction) suppresses duplicate prose within an active context epoch.
 
 ---
 
@@ -398,7 +399,7 @@ OpenCode Startup
 | Symptom | Root Cause | Solution |
 |---|---|---|
 | **Slow startup when opening OpenCode** | An enabled MCP server is slow to start. | The plugin awaits servers up to `timeout` (default 60s). Lower `timeout` or set a per-server `timeout` in `mcp.servers.<name>.timeout`. |
-| **`[Tool Search Required]` error** | The LLM attempted to call a `[deferred]` tool without searching first. | Call `tool_search({ query: "..." })` or `tool_search_regex({ pattern: "^name$" })` first. |
+| **`[Tool Hint]` appears after a failed tool call** | A `[deferred]` tool failed execution; the engine enriches the error with a pointer to the canonical search for detailed guidelines. | Call `tool_search_regex({ pattern: "^name$" })` to read the full usage documentation, then retry. |
 | **MCP server status placeholder shown** | Server failed or timed out during prewarm. | Check server command/URL and stderr logs. Once fixed, restart OpenCode. |
 | **Legacy config warning** | Using old `mcp: { "<server>": {...} }` format. | Wrap server definitions in `mcp: { servers: { ... } }`. |
 | **Need connection/failure details** | Server status goes to the plugin's file log (never the terminal — stdout output clobbers the TUI). | Inspect `~/.local/share/opencode/log/tool-search.log`. The log self-rotates to `tool-search.log.old` at 5 MB (max ~10 MB on disk), so it never needs manual cleanup. |
@@ -411,7 +412,7 @@ OpenCode Startup
 # Install dependencies
 npm install
 
-# Run Vitest test suite (125 tests across 6 suites)
+# Run Vitest test suite (134 tests across 8 suites)
 npm test
 
 # Typecheck
