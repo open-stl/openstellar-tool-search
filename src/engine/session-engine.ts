@@ -10,6 +10,8 @@ export const DEFAULT_DEFER = '[deferred]';
 const MAX_REGEX_PATTERN_LENGTH = 200;
 const SEARCH_TIMEOUT_MS = 2000;
 const MAX_QUERY_LENGTH = 500;
+/** Cap on tracked session tool manifests: prevents unbounded growth when session lifecycle events are missed. */
+const MAX_TRACKED_SESSIONS = 256;
 
 export const TOOL_SEARCH_PARAM_DESC =
   'Semantic capability or task description (e.g. "search code AST", "fetch web page").';
@@ -108,35 +110,6 @@ interface SystemPromptState {
  * surfaced to the model prompt. Exposes the search tools the plugin wires
  * into OpenCode, plus the operations the plugin hooks delegate to.
  */
-/**
- * Expands a Sleev message ID or range (e.g. "m0001-m0005", "m0011", "m4-m8")
- * into normalized set of message identifiers.
- */
-export function expandSleevId(id: string): string[] {
-  const trimmed = id.trim();
-  const rangeMatch = trimmed.match(/^m?(\d+)-m?(\d+)$/i);
-  if (rangeMatch) {
-    const start = parseInt(rangeMatch[1], 10);
-    const end = parseInt(rangeMatch[2], 10);
-    const padLen = rangeMatch[1].length;
-    const result: string[] = [];
-    const min = Math.min(start, end);
-    const max = Math.max(start, end);
-    for (let i = min; i <= max; i++) {
-      result.push('m' + String(i).padStart(padLen, '0'));
-      result.push(String(i));
-      result.push('m' + String(i));
-    }
-    return result;
-  }
-  const singleMatch = trimmed.match(/^m?(\d+)$/i);
-  if (singleMatch) {
-    const num = parseInt(singleMatch[1], 10);
-    return ['m' + String(num).padStart(singleMatch[1].length, '0'), String(num), 'm' + String(num), trimmed];
-  }
-  return [trimmed];
-}
-
 export class SessionEngine {
   public readonly vault: ToolVault;
   public readonly sessionRegistry: SessionToolRegistry;
@@ -146,6 +119,7 @@ export class SessionEngine {
   private readonly maxResults: number;
   private readonly useWorker: boolean;
   private readonly notify?: (title: string, message: string, variant?: 'info' | 'warning' | 'error', duration?: number) => void;
+  private readonly sessionTools = new Map<string, Set<string>>();
   private alerted = false;
 
   public constructor(
@@ -196,6 +170,15 @@ export class SessionEngine {
     return;
   }
 
+  public hasSearchTool(sessionID: string | undefined): boolean {
+    if (!sessionID) return true;
+    if (this.sessionTools.has(sessionID)) {
+      const tools = this.sessionTools.get(sessionID)!;
+      return tools.has('tool_search_regex') || tools.has('tool_search');
+    }
+    return true;
+  }
+
   public isDeferred(canonicalID: string): boolean {
     return this.sessionRegistry.isDeferred(canonicalID, this.vault.has(canonicalID));
   }
@@ -209,10 +192,6 @@ export class SessionEngine {
     sessionID: string | undefined,
     executionResult?: { error?: unknown; isError?: boolean; status?: unknown; output?: unknown },
   ): string | null {
-    // Reset tools (e.g. compress) clear delivery history silently without output pollution
-    this.sessionRegistry.resetIfConfigured(toolID, sessionID);
-
-    let reactiveHint: string | null = null;
     const isError = Boolean(
       executionResult?.isError ||
       executionResult?.error ||
@@ -220,17 +199,22 @@ export class SessionEngine {
       (typeof executionResult?.output === 'object' && (executionResult.output as any)?.status === 'error')
     );
 
-    if (isError && !SEARCH_IDS.has(toolID)) {
-      const meta = this.vault.resolveAlias(toolID);
-      const canonical = meta?.id ?? toolID;
-      const isDeferred = this.isDeferred(canonical);
-      const alreadyDelivered = this.sessionRegistry.isDelivered(sessionID, canonical);
-      if (isDeferred && !alreadyDelivered) {
-        reactiveHint = `\n\n[Tool Hint]: Execution failed for "${toolID}". To inspect detailed usage guidelines and documentation, call tool_search_regex({ pattern: "^${canonical}$" }).`;
-      }
+    if (!isError) {
+      this.sessionRegistry.resetIfConfigured(toolID, sessionID);
+      return null;
     }
 
-    return reactiveHint;
+    if (SEARCH_IDS.has(toolID)) return null;
+
+    const meta = this.vault.resolveAlias(toolID);
+    const canonical = meta?.id ?? toolID;
+    if (!this.isDeferred(canonical)) return null;
+    if (this.sessionRegistry.isDelivered(sessionID, canonical)) return null;
+
+    if (this.hasSearchTool(sessionID)) {
+      return `\n\n[Tool Hint]: Execution failed for "${toolID}". To inspect detailed usage guidelines and documentation, call tool_search_regex({ pattern: "^${canonical}$" }).`;
+    }
+    return `\n\n[Tool Hint]: Execution failed for "${toolID}". Review parameter types, required fields, and boundary constraints in the tool schema.`;
   }
 
   public enrichToolExecutionOutput(
@@ -239,6 +223,10 @@ export class SessionEngine {
     output: any,
   ): void {
     if (!output) return;
+    if (typeof output.content === 'string' && output.content.includes('[Tool Hint]')) return;
+    if (Array.isArray(output.content) && output.content.some((c: any) => typeof c?.text === 'string' && c.text.includes('[Tool Hint]'))) return;
+    if (typeof output.output === 'string' && output.output.includes('[Tool Hint]')) return;
+
     const notice = this.handleToolExecuted(toolID, sessionID, output);
     if (!notice) return;
 
@@ -302,177 +290,23 @@ export class SessionEngine {
     return { total, deferrals, policyText, alert };
   }
 
-  private extractMessageText(msg: unknown): string {
-    if (!msg || typeof msg !== 'object') return '';
-    const obj = msg as Record<string, unknown>;
-    let text = '';
-
-    if (typeof obj.content === 'string') {
-      text += obj.content + ' ';
-    } else if (Array.isArray(obj.content)) {
-      for (const item of obj.content) {
-        if (typeof item === 'string') {
-          text += item + ' ';
-        } else if (item && typeof item === 'object') {
-          const itemObj = item as Record<string, unknown>;
-          if (typeof itemObj.text === 'string') text += itemObj.text + ' ';
-          if (typeof itemObj.content === 'string') text += itemObj.content + ' ';
-        }
-      }
-    }
-
-    if (Array.isArray(obj.parts)) {
-      for (const part of obj.parts) {
-        if (typeof part === 'string') {
-          text += part + ' ';
-        } else if (part && typeof part === 'object') {
-          const partObj = part as Record<string, unknown>;
-          if (typeof partObj.text === 'string') text += partObj.text + ' ';
-          if (typeof partObj.content === 'string') text += partObj.content + ' ';
-          if (typeof partObj.output === 'string') text += partObj.output + ' ';
-          const state = partObj.state as Record<string, unknown> | undefined;
-          if (state && typeof state === 'object') {
-            if (typeof state.output === 'string') text += state.output + ' ';
-            if (typeof state.text === 'string') text += state.text + ' ';
-          }
-        }
-      }
-    }
-
-    if (Array.isArray(obj.blocks)) {
-      for (const block of obj.blocks) {
-        if (block && typeof block === 'object') {
-          const blockObj = block as Record<string, unknown>;
-          if (typeof blockObj.text === 'string') text += blockObj.text + ' ';
-          if (typeof blockObj.output === 'string') text += blockObj.output + ' ';
-          if (Array.isArray(blockObj.content)) {
-            for (const c of blockObj.content) {
-              if (c && typeof c === 'object') {
-                const cObj = c as Record<string, unknown>;
-                if (typeof cObj.text === 'string') text += cObj.text + ' ';
-                if (typeof cObj.output === 'string') text += cObj.output + ' ';
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // Strip sleev compressed summaries so compressed text doesn't falsely satisfy active presence
-    text = text.replace(/<sleev-id-compressed>[\s\S]*?<\/sleev-id-compressed>/gi, '');
-
-    return text;
-  }
-
   public compactSession(sessionID: string | undefined): string {
     this.sessionRegistry.compactSession(sessionID);
     return '\n\n[Tool Search] Context compacted — tool search history cleared. You may continue executing tools directly or search for documentation as needed.';
   }
 
   /**
-   * Under Stateless Advisory Discovery (Option 2+), routine turns without
-   * compaction events do not perform speculative presence-regex revocation
-   * over message text. Delivery suppression resets are strictly event-driven
-   * (session compaction or explicit Sleev compression prune events).
+   * ID-Aware Sleev Compression Sync:
+   * Under ADR 0003 Stateless Advisory Tool Discovery, authorizations are not gated
+   * or speculatively revoked across turns. Compaction resets are owned by lifecycle hooks
+   * and resetTools handling.
    */
-  public syncActiveAuthorizations(
+  public syncSleevCompression(
     _sessionID: string | undefined,
-    _messages?: Array<{ role?: string; content?: unknown }>,
+    _messages?: Array<unknown>,
     _tools?: Record<string, any>,
   ): string[] {
     return [];
-  }
-
-  /**
-   * ID-Aware Sleev Compression Sync:
-   * Inspects message history for completed `compress` tool calls, gathers all pruned message IDs,
-   * checks which authorized tools were delivered inside those pruned message blocks (<sleev-id-mXXXX>),
-   * and selectively revokes authorizations for tools whose schemas were pruned from active context.
-   */
-  public syncSleevCompression(
-    sessionID: string | undefined,
-    messages?: Array<unknown>,
-    tools?: Record<string, any>,
-  ): string[] {
-    if (!sessionID || !messages || messages.length === 0) return [];
-
-    const authorized = this.sessionRegistry.getAuthorizedTools(sessionID);
-    if (authorized.length === 0) return [];
-
-    // 1. Collect all pruned message IDs from completed `compress` tool calls
-    const prunedIds = new Set<string>();
-
-    for (const msg of messages) {
-      if (!msg || typeof msg !== 'object') continue;
-      const msgObj = msg as Record<string, unknown>;
-
-      // Check parts array (OpenCode format)
-      if (Array.isArray(msgObj.parts)) {
-        for (const part of msgObj.parts) {
-          if (part && typeof part === 'object') {
-            const p = part as Record<string, unknown>;
-            if (p.type === 'tool' && p.tool === 'compress') {
-              const state = p.state as Record<string, unknown> | undefined;
-              if (state?.status === 'completed' || p.status === 'completed') {
-                const input = (state?.input || p.input) as Record<string, unknown> | undefined;
-                if (Array.isArray(input?.ids)) {
-                  for (const id of input.ids) {
-                    if (typeof id === 'string') {
-                      for (const expanded of expandSleevId(id)) prunedIds.add(expanded);
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // Check tool_calls array (API format)
-      if (Array.isArray(msgObj.tool_calls)) {
-        for (const tc of msgObj.tool_calls) {
-          if (tc && typeof tc === 'object') {
-            const fn = (tc as Record<string, unknown>).function as Record<string, unknown> | undefined;
-            if (fn?.name === 'compress' && typeof fn.arguments === 'string') {
-              try {
-                const parsedArgs = JSON.parse(fn.arguments);
-                if (Array.isArray(parsedArgs.ids)) {
-                  for (const id of parsedArgs.ids) {
-                    if (typeof id === 'string') {
-                      for (const expanded of expandSleevId(id)) prunedIds.add(expanded);
-                    }
-                  }
-                }
-              } catch {
-                // ignore parse error
-              }
-            }
-          }
-        }
-      }
-    }
-
-    if (prunedIds.size === 0) {
-      return this.syncActiveAuthorizations(sessionID, messages as any, tools);
-    }
-
-    // 3. Under ADR 0003, tools are ungated and authorizations are not subject
-    //    to ephemeral text presence revocation.
-    return [];
-  }
-
-  /**
-   * True when the tool's key still exists in the durable per-turn tools payload.
-   * The tools array survives Sleev compaction (verified: 47/47 request pairs
-   * keep the first 320 tool entries byte-identical); the message channel does not.
-   * An authorized tool still served in tools must NOT be revoked merely because
-   * the conversation message that first announced it was pruned.
-   */
-  private toolStillServable(toolID: string, tools: Record<string, any>): boolean {
-    if (!tools || typeof tools !== 'object') return false;
-    const direct = tools[toolID];
-    if (direct && typeof direct === 'object') return true;
-    return Object.keys(tools).some((key) => key.endsWith(toolID));
   }
 
   public applyContextTurn(sessionCtx: {
@@ -483,6 +317,15 @@ export class SessionEngine {
   }): void {
     if (!sessionCtx) return;
 
+    if (sessionCtx.sessionID && sessionCtx.tools && typeof sessionCtx.tools === 'object') {
+      this.sessionTools.set(sessionCtx.sessionID, new Set(Object.keys(sessionCtx.tools)));
+      while (this.sessionTools.size > MAX_TRACKED_SESSIONS) {
+        const oldest = this.sessionTools.keys().next().value;
+        if (oldest === undefined) break;
+        this.sessionTools.delete(oldest);
+      }
+    }
+
     this.syncSleevCompression(sessionCtx.sessionID, sessionCtx.messages, sessionCtx.tools);
 
     if (sessionCtx.tools && typeof sessionCtx.tools === 'object') {
@@ -491,16 +334,8 @@ export class SessionEngine {
         const normalizedInput = normalizeParameters(toolDef.input, toolDef.jsonSchema);
         this.vault.add(toolName, toolDef.description, normalizedInput);
         if (this.sessionRegistry.registerTool(toolName)) {
-          if (!this.sessionRegistry.isAuthorized(sessionCtx.sessionID, toolName)) {
-            const pristineDesc = this.vault.get(toolName)?.description ?? toolDef.description;
-            toolDef.description = truncateDescription(pristineDesc, this.deferLabel);
-          } else {
-            const stored = this.vault.get(toolName);
-            if (stored) {
-              toolDef.description = stored.description;
-              toolDef.input = stored.parameters;
-            }
-          }
+          const pristineDesc = this.vault.get(toolName)?.description ?? toolDef.description;
+          toolDef.description = truncateDescription(pristineDesc, this.deferLabel);
         }
       }
     }
@@ -527,9 +362,10 @@ export class SessionEngine {
     const evt = event?.event ?? event;
     if (!evt || typeof evt !== 'object') return;
     if (evt.type === 'session.deleted') {
-      const sessionID = (evt.properties as { sessionID?: unknown } | undefined)?.sessionID;
+      const sessionID = (evt.properties as any)?.sessionID ?? (evt.properties as any)?.id ?? (evt as any)?.sessionID;
       if (typeof sessionID === 'string' && sessionID.length > 0) {
         this.deleteSession(sessionID);
+        this.sessionTools.delete(sessionID);
       }
     } else if (evt.type === 'session.compacted' || evt.type === 'session.compaction') {
       const sessionID = (evt.properties as { sessionID?: unknown } | undefined)?.sessionID ?? (evt as { sessionID?: unknown })?.sessionID;

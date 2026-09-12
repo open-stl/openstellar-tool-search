@@ -4,8 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { plugin } from '../src/plugin.js';
 import { ToolVault } from '../src/catalog/vault.js';
-import { AuthPersistence } from '../src/engine/auth-persistence.js';
-import type { PersistedToolAuthorization } from '../src/engine/auth-persistence.js';
+import { DeliveryHistoryPersistence } from '../src/engine/delivery-history.js';
 
 const ToolSearchPlugin = plugin.server;
 
@@ -203,17 +202,16 @@ describe('ToolSearchPlugin', () => {
     }
   });
 
-  it('preserves real _ide canonical authorization across plugin restart', async () => {
-    const authorizations = new Map<string, Set<PersistedToolAuthorization>>();
-    const lastSeen = new Map<string, number>();
-    const loadSpy = vi.spyOn(AuthPersistence.prototype, 'load').mockReturnValue({ authorizations, lastSeen });
-    const saveSpy = vi.spyOn(AuthPersistence.prototype, 'save').mockImplementation(() => {});
+  it('preserves real _ide canonical discovery across plugin restart', async () => {
+    const history = new Map<string, Map<string, string>>();
+    const loadSpy = vi.spyOn(DeliveryHistoryPersistence.prototype, 'load').mockReturnValue(history);
+    const saveSpy = vi.spyOn(DeliveryHistoryPersistence.prototype, 'save').mockImplementation(() => {});
 
     const first = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await first['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
     await first['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
     await (first.tool as any).tool_search_regex.execute({ pattern: '^foo_ide$' }, { sessionID: 'restart-session' });
-    expect(Array.from(authorizations.get('restart-session') ?? []).some((entry: any) => entry && typeof entry === 'object' && entry.kind === 'canonical-tool' && entry.version === 1 && entry.canonicalId === 'foo_ide')).toBe(true);
+    expect(history.get('restart-session')?.has('foo_ide')).toBe(true);
 
     const second = await ToolSearchPlugin({} as any, { mode: 'keyword' });
     await second['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
@@ -223,20 +221,6 @@ describe('ToolSearchPlugin', () => {
     expect(output.output).toBe('Real result');
     expect(loadSpy).toHaveBeenCalledTimes(2);
     expect(saveSpy).toHaveBeenCalled();
-  });
-
-  it('migrates legacy synthesized _ide authorization to a real canonical tool', async () => {
-    const authorizations = new Map<string, Set<PersistedToolAuthorization>>([['legacy-session', new Set<PersistedToolAuthorization>(['foo_ide'])]]);
-    const lastSeen = new Map<string, number>();
-    vi.spyOn(AuthPersistence.prototype, 'load').mockReturnValue({ authorizations, lastSeen });
-    vi.spyOn(AuthPersistence.prototype, 'save').mockImplementation(() => {});
-
-    const hooks = await ToolSearchPlugin({} as any, { mode: 'keyword' });
-    await hooks['tool.definition']!({ toolID: 'foo' }, { description: 'Canonical foo', parameters: {} });
-    await hooks['tool.definition']!({ toolID: 'foo_ide' }, { description: 'Real foo ide', parameters: {} });
-    await expect(
-      hooks['tool.execute.before']!({ tool: 'foo_ide', sessionID: 'legacy-session' } as any, {} as any)
-    ).resolves.not.toThrow();
   });
 
   it('documents precise canonical tool policy guidance with batch regex alternation', async () => {

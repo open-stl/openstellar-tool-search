@@ -198,11 +198,12 @@ describe('v1 and v2 Unified End-to-End Contract Verification', () => {
     expect(contentText).not.toContain('parameters:');
     expect(contentText).not.toContain('"properties"');
 
-    // 4. Context hook turn 2: authorized tool
-    // Full description is restored, parameter schema remains intact
+    // 4. Context hook turn 2: description remains truncated ([deferred]) per ADR 0003
+    // token virtualization — full docs were delivered via the search response message
+    // channel; the parameter schema stays intact in the tools array.
     await sessionHooks['context'][0](sessionCtx);
     expect(sessionCtx.tools.data_query.description).toBe(
-      'Query relational database tables using SQL syntax. Supports joins.',
+      'Query relational database tables using SQL syntax. [deferred]',
     );
     expect(sessionCtx.tools.data_query.input.properties.query).toBeDefined();
 

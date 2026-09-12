@@ -276,9 +276,11 @@ describe('OpenCode 2.0 setupV2', () => {
     // Authorize bash via tool_search_regex
     await addedTools.tool_search_regex.execute({ pattern: '^bash$' }, { sessionID: 'ses-3' });
 
-    // Third context turn after authorization: full description and input restored
+    // Third context turn after authorization: description remains truncated per ADR 0003
+    // token virtualization — full docs delivered via the search response message channel;
+    // the input schema stays intact in the tools array.
     await sessionHooks['context'][0](sessionCtx);
-    expect(sessionCtx.tools.bash.description).toBe('Run arbitrary bash commands on host. Use with caution.');
+    expect(sessionCtx.tools.bash.description).toBe('Run arbitrary bash commands on host. [deferred]');
     expect(sessionCtx.tools.bash.input).toEqual({
       type: 'object',
       properties: {
